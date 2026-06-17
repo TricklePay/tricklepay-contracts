@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, token::Client as TokenClient, Address,
 use crate::error::StreamError;
 use crate::events;
 use crate::storage;
-use crate::types::Stream;
+use crate::types::{Stream, StreamStatus};
 use crate::vesting;
 
 #[contract]
@@ -149,5 +149,58 @@ impl StreamContract {
         events::cancelled(&env, id, &stream.sender, recipient_remaining, refund);
 
         Ok(refund)
+    }
+
+    /// Fetch a stream by id.
+    pub fn get_stream(env: Env, id: u64) -> Result<Stream, StreamError> {
+        storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
+    }
+
+    /// Amount the recipient can withdraw right now.
+    pub fn withdrawable(env: Env, id: u64) -> Result<i128, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            env.ledger().timestamp(),
+        );
+        Ok(vesting::withdrawable_amount(vested, stream.withdrawn))
+    }
+
+    /// Total amount vested so far, including anything already withdrawn.
+    pub fn vested(env: Env, id: u64) -> Result<i128, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        Ok(vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            env.ledger().timestamp(),
+        ))
+    }
+
+    /// Lifecycle status of a stream at the current ledger time.
+    pub fn status(env: Env, id: u64) -> Result<StreamStatus, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Ok(StreamStatus::Cancelled);
+        }
+        let now = env.ledger().timestamp();
+        let status = if now < stream.start_time {
+            StreamStatus::Pending
+        } else if now >= stream.end_time {
+            StreamStatus::Completed
+        } else {
+            StreamStatus::Streaming
+        };
+        Ok(status)
+    }
+
+    /// Number of streams created so far. Ids run from zero up to this value
+    /// minus one.
+    pub fn stream_count(env: Env) -> u64 {
+        storage::stream_count(&env)
     }
 }
