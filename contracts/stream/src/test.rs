@@ -13,7 +13,6 @@ pub struct StreamTest<'a> {
     pub env: Env,
     pub contract: StreamContractClient<'a>,
     pub token: token::TokenClient<'a>,
-    pub token_admin: token::StellarAssetClient<'a>,
     pub token_address: Address,
     pub sender: Address,
     pub recipient: Address,
@@ -44,7 +43,6 @@ impl<'a> StreamTest<'a> {
             env,
             contract,
             token,
-            token_admin,
             token_address,
             sender,
             recipient,
@@ -55,4 +53,30 @@ impl<'a> StreamTest<'a> {
     pub fn set_time(&self, ts: u64) {
         self.env.ledger().set_timestamp(ts);
     }
+}
+
+#[test]
+fn create_stream_locks_funds_and_assigns_id() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    // start == cliff means the stream has no cliff.
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    assert_eq!(id, 0);
+    assert_eq!(t.contract.stream_count(), 1);
+
+    // The full amount has moved from the sender into the contract.
+    assert_eq!(t.token.balance(&t.sender), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+
+    let stream = t.contract.get_stream(&id);
+    assert_eq!(stream.sender, t.sender);
+    assert_eq!(stream.recipient, t.recipient);
+    assert_eq!(stream.token, t.token_address);
+    assert_eq!(stream.total_amount, 1_000);
+    assert_eq!(stream.withdrawn, 0);
+    assert!(!stream.cancelled);
 }
