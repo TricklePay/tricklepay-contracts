@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token::Client as TokenClient, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
 
 use crate::error::StreamError;
 use crate::events;
