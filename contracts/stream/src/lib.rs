@@ -13,6 +13,9 @@ mod storage;
 mod types;
 mod vesting;
 
+#[cfg(test)]
+mod test;
+
 pub use contract::{StreamContract, StreamContractClient};
 pub use error::StreamError;
 pub use types::{Stream, StreamStatus};
