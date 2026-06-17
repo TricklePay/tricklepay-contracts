@@ -62,7 +62,14 @@ impl StreamContract {
         storage::set_stream(&env, id, &stream);
         storage::set_stream_count(&env, id + 1);
 
-        events::created(&env, id, &sender, &recipient, &token, total_amount);
+        events::Created {
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            id,
+            token: token.clone(),
+            total_amount,
+        }
+        .publish(&env);
 
         Ok(id)
     }
@@ -98,7 +105,12 @@ impl StreamContract {
             &available,
         );
 
-        events::withdrawn(&env, id, &stream.recipient, available);
+        events::Withdrawn {
+            recipient: stream.recipient.clone(),
+            id,
+            amount: available,
+        }
+        .publish(&env);
 
         Ok(available)
     }
@@ -146,7 +158,13 @@ impl StreamContract {
             );
         }
 
-        events::cancelled(&env, id, &stream.sender, recipient_remaining, refund);
+        events::Cancelled {
+            sender: stream.sender.clone(),
+            id,
+            recipient_amount: recipient_remaining,
+            sender_refund: refund,
+        }
+        .publish(&env);
 
         Ok(refund)
     }
