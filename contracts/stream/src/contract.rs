@@ -4,6 +4,7 @@ use crate::error::StreamError;
 use crate::events;
 use crate::storage;
 use crate::types::Stream;
+use crate::vesting;
 
 #[contract]
 pub struct StreamContract;
@@ -64,5 +65,41 @@ impl StreamContract {
         events::created(&env, id, &sender, &recipient, &token, total_amount);
 
         Ok(id)
+    }
+
+    /// Withdraw everything that has vested but not yet been taken.
+    ///
+    /// Only the recipient may call this. The amount sent is whatever has
+    /// vested up to the current ledger time minus what was withdrawn before.
+    /// Returns the amount transferred.
+    pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        let now = env.ledger().timestamp();
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            now,
+        );
+        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
+        if available <= 0 {
+            return Err(StreamError::NothingToWithdraw);
+        }
+
+        stream.withdrawn += available;
+        storage::set_stream(&env, id, &stream);
+
+        TokenClient::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &stream.recipient,
+            &available,
+        );
+
+        events::withdrawn(&env, id, &stream.recipient, available);
+
+        Ok(available)
     }
 }
