@@ -102,4 +102,52 @@ impl StreamContract {
 
         Ok(available)
     }
+
+    /// Cancel a stream and refund the unvested remainder to the sender.
+    ///
+    /// Only the sender may call this. Whatever has vested up to the current
+    /// ledger time stays claimable by the recipient through [`Self::withdraw`];
+    /// the rest is returned to the sender. Once cancelled, no further tokens
+    /// vest. Returns the amount refunded to the sender.
+    pub fn cancel(env: Env, id: u64) -> Result<i128, StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.sender.require_auth();
+
+        if stream.cancelled {
+            return Err(StreamError::AlreadyCancelled);
+        }
+
+        let now = env.ledger().timestamp();
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            now,
+        );
+        let refund = stream.total_amount - vested;
+        let recipient_remaining = vested - stream.withdrawn;
+
+        // Freeze the stream at the vested amount. With the total reduced to
+        // what has vested and the window closed at `now`, no further tokens
+        // vest, but the recipient can still withdraw their accrued share.
+        stream.total_amount = vested;
+        stream.start_time = stream.start_time.min(now);
+        stream.cliff_time = stream.cliff_time.min(now);
+        stream.end_time = now;
+        stream.cancelled = true;
+        storage::set_stream(&env, id, &stream);
+
+        if refund > 0 {
+            TokenClient::new(&env, &stream.token).transfer(
+                &env.current_contract_address(),
+                &stream.sender,
+                &refund,
+            );
+        }
+
+        events::cancelled(&env, id, &stream.sender, recipient_remaining, refund);
+
+        Ok(refund)
+    }
 }
