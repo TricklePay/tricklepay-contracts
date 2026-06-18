@@ -80,3 +80,33 @@ fn create_stream_locks_funds_and_assigns_id() {
     assert_eq!(stream.withdrawn, 0);
     assert!(!stream.cancelled);
 }
+
+#[test]
+fn withdraw_releases_vested_in_steps() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    // Midpoint: half has vested.
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw(&id), 500);
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    // Nothing more is available until the clock advances again.
+    assert_eq!(t.contract.withdrawable(&id), 0);
+
+    // Three-quarter point: another 250 has vested.
+    t.set_time(850);
+    assert_eq!(t.contract.withdraw(&id), 250);
+    assert_eq!(t.token.balance(&t.recipient), 750);
+
+    // End: the final 250.
+    t.set_time(1_100);
+    assert_eq!(t.contract.withdraw(&id), 250);
+    assert_eq!(t.token.balance(&t.recipient), 1_000);
+
+    // The contract is drained and the stream is fully settled.
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 1_000);
+}
