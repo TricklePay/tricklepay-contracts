@@ -201,3 +201,65 @@ fn cancel_requires_sender_authorization() {
     let auths = t.env.auths();
     assert!(auths.iter().any(|(addr, _)| addr == &t.sender));
 }
+
+#[test]
+fn create_stream_rejects_invalid_parameters() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let zero_amount =
+        t.contract
+            .try_create_stream(&t.sender, &t.recipient, &t.token_address, &0, &100, &1_100, &100);
+    assert_eq!(zero_amount, Err(Ok(StreamError::InvalidAmount)));
+
+    let negative_amount = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &-5,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(negative_amount, Err(Ok(StreamError::InvalidAmount)));
+
+    // Start is not strictly before end.
+    let bad_range = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &1_100,
+        &1_100,
+        &1_100,
+    );
+    assert_eq!(bad_range, Err(Ok(StreamError::InvalidTimeRange)));
+
+    // Cliff before the start.
+    let cliff_early = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &50,
+    );
+    assert_eq!(cliff_early, Err(Ok(StreamError::InvalidCliff)));
+
+    // Cliff after the end.
+    let cliff_late = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &1_200,
+    );
+    assert_eq!(cliff_late, Err(Ok(StreamError::InvalidCliff)));
+
+    // None of the rejected calls created state or moved funds.
+    assert_eq!(t.contract.stream_count(), 0);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+}
