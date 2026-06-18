@@ -6,6 +6,7 @@ use soroban_sdk::{
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
+use crate::StreamError;
 
 /// A fully wired test environment: a registered stream contract, a token to
 /// stream, and helpers to fund accounts and move the ledger clock.
@@ -109,4 +110,28 @@ fn withdraw_releases_vested_in_steps() {
     // The contract is drained and the stream is fully settled.
     assert_eq!(t.token.balance(&t.contract.address), 0);
     assert_eq!(t.contract.get_stream(&id).withdrawn, 1_000);
+}
+
+#[test]
+fn cliff_blocks_withdrawal_until_reached() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    // Cliff sits at the midpoint of the stream.
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &600);
+
+    // Before the cliff, time has passed but nothing is available.
+    t.set_time(400);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+
+    // At the cliff, everything accrued since the start unlocks at once.
+    t.set_time(600);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+    assert_eq!(t.contract.withdraw(&id), 500);
+    assert_eq!(t.token.balance(&t.recipient), 500);
 }
