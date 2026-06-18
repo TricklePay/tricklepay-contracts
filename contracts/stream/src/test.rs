@@ -168,3 +168,36 @@ fn cancel_refunds_unvested_and_preserves_vested() {
         Err(Ok(StreamError::AlreadyCancelled))
     );
 }
+
+#[test]
+fn withdraw_requires_recipient_authorization() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    t.set_time(600);
+    t.contract.withdraw(&id);
+
+    // The withdraw required the recipient to authorize; no one else could
+    // have pulled these funds.
+    let auths = t.env.auths();
+    assert!(auths.iter().any(|(addr, _)| addr == &t.recipient));
+}
+
+#[test]
+fn cancel_requires_sender_authorization() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    t.set_time(600);
+    t.contract.cancel(&id);
+
+    // Only the sender can cancel and reclaim the unvested remainder.
+    let auths = t.env.auths();
+    assert!(auths.iter().any(|(addr, _)| addr == &t.sender));
+}
