@@ -46,3 +46,72 @@ pub fn withdrawable_amount(vested: i128, withdrawn: i128) -> i128 {
         available
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A reference stream: 1000 units over [100, 1100], no cliff (cliff == start).
+    const TOTAL: i128 = 1_000;
+    const START: u64 = 100;
+    const END: u64 = 1_100;
+
+    #[test]
+    fn nothing_vests_before_start() {
+        assert_eq!(vested_amount(TOTAL, START, END, START, 50), 0);
+    }
+
+    #[test]
+    fn nothing_vests_before_cliff() {
+        // Past the start but before a cliff set at the midpoint.
+        assert_eq!(vested_amount(TOTAL, START, END, 600, 300), 0);
+    }
+
+    #[test]
+    fn half_vests_at_midpoint() {
+        assert_eq!(vested_amount(TOTAL, START, END, START, 600), 500);
+    }
+
+    #[test]
+    fn quarter_vests_at_quarter_point() {
+        assert_eq!(vested_amount(TOTAL, START, END, START, 350), 250);
+    }
+
+    #[test]
+    fn full_amount_vests_at_end() {
+        assert_eq!(vested_amount(TOTAL, START, END, START, END), TOTAL);
+    }
+
+    #[test]
+    fn full_amount_vests_after_end() {
+        assert_eq!(vested_amount(TOTAL, START, END, START, 9_999), TOTAL);
+    }
+
+    #[test]
+    fn cliff_releases_accrued_amount_at_once() {
+        // At the cliff, the linearly accrued amount since start becomes
+        // available in one step: 500 of 1000 at the midpoint.
+        assert_eq!(vested_amount(TOTAL, START, END, 600, 600), 500);
+    }
+
+    #[test]
+    fn integer_division_rounds_down() {
+        // 10 * 1 / 3 = 3.33, truncated to 3.
+        assert_eq!(vested_amount(10, 0, 3, 0, 1), 3);
+    }
+
+    #[test]
+    fn withdrawable_subtracts_withdrawn() {
+        assert_eq!(withdrawable_amount(500, 200), 300);
+    }
+
+    #[test]
+    fn withdrawable_is_never_negative() {
+        assert_eq!(withdrawable_amount(200, 500), 0);
+    }
+
+    #[test]
+    fn withdrawable_is_zero_when_fully_taken() {
+        assert_eq!(withdrawable_amount(300, 300), 0);
+    }
+}
