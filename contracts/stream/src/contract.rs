@@ -19,6 +19,9 @@ impl StreamContract {
     /// pass `cliff_time == start_time` for a stream with no cliff.
     ///
     /// Returns the id assigned to the new stream.
+    // A contract entry point: every field is part of the public call shape,
+    // so bundling them into a struct would only obscure the interface.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_stream(
         env: Env,
         sender: Address,
@@ -43,7 +46,7 @@ impl StreamContract {
 
         TokenClient::new(&env, &token).transfer(
             &sender,
-            &env.current_contract_address(),
+            env.current_contract_address(),
             &total_amount,
         );
 
