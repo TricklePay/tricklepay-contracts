@@ -62,9 +62,15 @@ fn create_stream_locks_funds_and_assigns_id() {
     t.set_time(100);
 
     // start == cliff means the stream has no cliff.
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     assert_eq!(id, 0);
     assert_eq!(t.contract.stream_count(), 1);
@@ -86,9 +92,15 @@ fn create_stream_locks_funds_and_assigns_id() {
 fn withdraw_releases_vested_in_steps() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     // Midpoint: half has vested.
     t.set_time(600);
@@ -117,9 +129,15 @@ fn cliff_blocks_withdrawal_until_reached() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
     // Cliff sits at the midpoint of the stream.
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &600);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &600,
+    );
 
     // Before the cliff, time has passed but nothing is available.
     t.set_time(400);
@@ -140,9 +158,15 @@ fn cliff_blocks_withdrawal_until_reached() {
 fn cancel_refunds_unvested_and_preserves_vested() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     // Halfway through: 500 vested, 500 still locked.
     t.set_time(600);
@@ -173,9 +197,15 @@ fn cancel_refunds_unvested_and_preserves_vested() {
 fn withdraw_requires_recipient_authorization() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     t.set_time(600);
     t.contract.withdraw(&id);
@@ -190,9 +220,15 @@ fn withdraw_requires_recipient_authorization() {
 fn cancel_requires_sender_authorization() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     t.set_time(600);
     t.contract.cancel(&id);
@@ -207,9 +243,15 @@ fn create_stream_rejects_invalid_parameters() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
 
-    let zero_amount =
-        t.contract
-            .try_create_stream(&t.sender, &t.recipient, &t.token_address, &0, &100, &1_100, &100);
+    let zero_amount = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &0,
+        &100,
+        &1_100,
+        &100,
+    );
     assert_eq!(zero_amount, Err(Ok(StreamError::InvalidAmount)));
 
     let negative_amount = t.contract.try_create_stream(
@@ -268,9 +310,15 @@ fn create_stream_rejects_invalid_parameters() {
 fn second_withdraw_without_progress_is_rejected() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    let id = t
-        .contract
-        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
 
     t.set_time(600);
     assert_eq!(t.contract.withdraw(&id), 500);
