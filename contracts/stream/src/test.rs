@@ -6,7 +6,7 @@ use soroban_sdk::{
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
-use crate::StreamError;
+use crate::{StreamError, StreamStatus};
 
 /// A fully wired test environment: a registered stream contract, a token to
 /// stream, and helpers to fund accounts and move the ledger clock.
@@ -134,4 +134,37 @@ fn cliff_blocks_withdrawal_until_reached() {
     assert_eq!(t.contract.withdrawable(&id), 500);
     assert_eq!(t.contract.withdraw(&id), 500);
     assert_eq!(t.token.balance(&t.recipient), 500);
+}
+
+#[test]
+fn cancel_refunds_unvested_and_preserves_vested() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    // Halfway through: 500 vested, 500 still locked.
+    t.set_time(600);
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 500);
+
+    // The sender gets the unvested half back immediately.
+    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+
+    // The recipient's vested half stays claimable, even much later.
+    t.set_time(2_000);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+    assert_eq!(t.contract.withdraw(&id), 500);
+    assert_eq!(t.token.balance(&t.recipient), 500);
+
+    // The split adds up to the original total and the contract is drained.
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+
+    // A stream cannot be cancelled twice.
+    assert_eq!(
+        t.contract.try_cancel(&id),
+        Err(Ok(StreamError::AlreadyCancelled))
+    );
 }
