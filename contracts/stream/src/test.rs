@@ -263,3 +263,44 @@ fn create_stream_rejects_invalid_parameters() {
     assert_eq!(t.contract.stream_count(), 0);
     assert_eq!(t.token.balance(&t.sender), 1_000);
 }
+
+#[test]
+fn second_withdraw_without_progress_is_rejected() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw(&id), 500);
+
+    // Withdrawing again with no time elapsed releases nothing.
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+    assert_eq!(t.token.balance(&t.recipient), 500);
+}
+
+#[test]
+fn operations_on_unknown_stream_report_not_found() {
+    let t = StreamTest::setup(1_000);
+
+    assert_eq!(
+        t.contract.try_get_stream(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        t.contract.try_withdraw(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        t.contract.try_cancel(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        t.contract.try_withdrawable(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
