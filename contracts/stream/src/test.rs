@@ -125,6 +125,24 @@ fn withdraw_releases_vested_in_steps() {
 }
 
 #[test]
+fn locked_decreases_as_the_stream_vests() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    // At the start the whole amount is locked.
+    assert_eq!(t.contract.locked(&id), 1_000);
+    // Halfway, half is locked.
+    t.set_time(600);
+    assert_eq!(t.contract.locked(&id), 500);
+    // At the end, nothing is locked.
+    t.set_time(1_100);
+    assert_eq!(t.contract.locked(&id), 0);
+}
+
+#[test]
 fn withdraw_amount_takes_a_partial_balance() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);

@@ -249,6 +249,21 @@ impl StreamContract {
         ))
     }
 
+    /// Amount not yet vested: the portion still locked in the contract that the
+    /// recipient cannot withdraw yet. A cancelled stream has nothing locked,
+    /// since cancellation freezes the total at the vested amount.
+    pub fn locked(env: Env, id: u64) -> Result<i128, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            env.ledger().timestamp(),
+        );
+        Ok(stream.total_amount - vested)
+    }
+
     /// Lifecycle status of a stream at the current ledger time.
     pub fn status(env: Env, id: u64) -> Result<StreamStatus, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
