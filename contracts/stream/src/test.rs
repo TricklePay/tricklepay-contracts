@@ -125,6 +125,34 @@ fn withdraw_releases_vested_in_steps() {
 }
 
 #[test]
+fn withdraw_amount_takes_a_partial_balance() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t
+        .contract
+        .create_stream(&t.sender, &t.recipient, &t.token_address, &1_000, &100, &1_100, &100);
+
+    // Midpoint: 500 vested. Take only 200 of it.
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+    // 300 of the vested 500 is still available.
+    assert_eq!(t.contract.withdrawable(&id), 300);
+
+    // Taking more than is available is rejected.
+    assert_eq!(
+        t.contract.try_withdraw_amount(&id, &400),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+
+    // A non-positive amount is rejected.
+    assert_eq!(
+        t.contract.try_withdraw_amount(&id, &0),
+        Err(Ok(StreamError::InvalidAmount))
+    );
+}
+
+#[test]
 fn cliff_blocks_withdrawal_until_reached() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);

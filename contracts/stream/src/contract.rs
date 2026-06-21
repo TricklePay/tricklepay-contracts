@@ -118,6 +118,53 @@ impl StreamContract {
         Ok(available)
     }
 
+    /// Withdraw a specific amount, up to what has vested.
+    ///
+    /// Only the recipient may call this. It behaves like [`Self::withdraw`] but
+    /// lets the caller take less than the full available balance, which is
+    /// useful for drawing a fixed sum or leaving a buffer in the stream. Fails
+    /// if the requested amount exceeds the currently withdrawable balance.
+    /// Returns the amount transferred.
+    pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let now = env.ledger().timestamp();
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            now,
+        );
+        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
+        if amount > available {
+            return Err(StreamError::InsufficientBalance);
+        }
+
+        stream.withdrawn += amount;
+        storage::set_stream(&env, id, &stream);
+
+        TokenClient::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &stream.recipient,
+            &amount,
+        );
+
+        events::Withdrawn {
+            recipient: stream.recipient.clone(),
+            id,
+            amount,
+        }
+        .publish(&env);
+
+        Ok(amount)
+    }
+
     /// Cancel a stream and refund the unvested remainder to the sender.
     ///
     /// Only the sender may call this. Whatever has vested up to the current
