@@ -69,6 +69,20 @@ recipient. `Created` also carries the schedule, so a stream can be recorded
 without a follow-up `get_stream` call, and `withdraw` and `withdraw_amount`
 publish the same `Withdrawn` event.
 
+## Upgradeability
+
+**This contract is immutable. It cannot be upgraded after deployment.**
+
+There is no admin account, proxy pattern, or `update_current_contract_wasm` call anywhere in the code. Once deployed, the bytecode is fixed for the lifetime of the contract address.
+
+Consequences for anyone locking funds:
+
+- If a bug is found after deployment, the contract **cannot be patched in place**. The only remediation path is to deploy a new contract and migrate funds — which requires every active stream to be cancelled (returning unvested tokens to senders) and recreated against the new address. Vested-but-unwithdrawn balances must be withdrawn before migration, as there is no bulk transfer mechanism.
+- There is no privileged party who can force a migration. Both the sender and the recipient must act voluntarily.
+- Tokens locked in an in-flight stream are exposed to any vulnerability in the deployed code for the full duration of that stream, with no escape hatch beyond the sender's `cancel`.
+
+This is a deliberate design choice. An upgrade mechanism would require a privileged key whose compromise could rewrite the contract logic under all active streams simultaneously. Immutability removes that risk at the cost of operational flexibility. The same rationale applies to the absence of a pause or emergency-stop function — see [Security model](#security-model) for full details.
+
 ## Security model
 
 **The contract has no pause, freeze, or emergency-stop function.** There is no
@@ -88,6 +102,25 @@ flexibility.
 
 Full details — including the rationale, consequences for lock-up decisions, and
 out-of-scope risks — are in [THREAT_MODEL.md](THREAT_MODEL.md).
+
+## Stream enumeration
+
+**On-chain enumeration of streams by address is deliberately not supported.**
+
+Streams are keyed by numeric id only. The contract does not maintain per-sender or per-recipient index lists for the following reasons:
+
+- Soroban persistent storage is paid per entry and per ledger. Maintaining a dynamic list of ids under each address key would require unbounded storage growth and complex TTL management, imposing costs on every `create_stream` call that are proportional to how active the address is.
+- A contract-side list would need a maximum length cap or pagination scheme, adding surface area for bugs and gas exhaustion attacks.
+
+**How to enumerate streams for an address:**
+
+Use the `Created` event. Each `Created` event is published with `sender` and `recipient` as indexed topics, so any indexer (Horizon, RPC, or the tricklepay-backend) can filter events by topic to reconstruct the full set of stream ids for any address without a follow-up `get_stream` call. The event also carries the full schedule, so streams can be recorded on first observation.
+
+For a contract-only consumer with no event access:
+1. Call `stream_count()` to get the total number of streams.
+2. Call `get_stream(id)` for each id from `0` to `stream_count() - 1` and filter by `sender` or `recipient`.
+
+This is O(n) over all streams and is only suitable for small deployments or one-off queries. Production consumers should use event indexing.
 
 ## Building
 
