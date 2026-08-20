@@ -39,4 +39,10 @@ pub enum StreamError {
     /// guarantees the product never overflows `i128`, because
     /// `i64::MAX * u64::MAX < i128::MAX`.
     AmountTooLarge = 10,
+    /// The sender and recipient are the same address.
+    ///
+    /// Streaming to yourself locks tokens in the contract and immediately
+    /// makes them withdrawable by the same account — functionally a no-op
+    /// that wastes fees and is almost always a copy-paste mistake.
+    SenderIsRecipient = 11,
 }

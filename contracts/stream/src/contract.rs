@@ -46,6 +46,9 @@ impl StreamContract {
     ) -> Result<u64, StreamError> {
         sender.require_auth();
 
+        if sender == recipient {
+            return Err(StreamError::SenderIsRecipient);
+        }
         if total_amount <= 0 {
             return Err(StreamError::InvalidAmount);
         }

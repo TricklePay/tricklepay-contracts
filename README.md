@@ -46,7 +46,7 @@ seconds, matching the ledger clock.
 
 | Function | Caller | Description |
 | --- | --- | --- |
-| `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender | Locks `total_amount` and opens a stream, returning its id. |
+| `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender | Locks `total_amount` and opens a stream, returning its id. `sender` and `recipient` must be different addresses. |
 | `withdraw(id) -> i128` | recipient | Transfers the vested, unwithdrawn balance to the recipient. |
 | `withdraw_amount(id, amount) -> i128` | recipient | Transfers exactly `amount`; fails if it exceeds the withdrawable balance. |
 | `cancel(id) -> i128` | sender | Refunds the unvested remainder to the sender and freezes the stream. |
@@ -62,6 +62,23 @@ The first four calls move tokens and require authorization from the caller
 named above. The rest are read-only views computed from the stream record and
 the current ledger time; those that take an id return `StreamNotFound` when no
 stream has it.
+
+### Error codes
+
+| Code | Variant | When returned |
+| --- | --- | --- |
+| 1 | `StreamNotFound` | No stream exists for the given id. |
+| 3 | `InvalidTimeRange` | `start_time` is not strictly before `end_time`. |
+| 4 | `InvalidAmount` | `total_amount` is zero or negative, or the withdrawal amount is non-positive. |
+| 5 | `InvalidCliff` | `cliff_time` falls outside `[start_time, end_time]`. |
+| 6 | `AlreadyCancelled` | Attempting to cancel a stream that was already cancelled. |
+| 7 | `NothingToWithdraw` | No vested balance is available to withdraw right now. |
+| 8 | `InsufficientBalance` | Requested withdrawal exceeds the available vested balance. |
+| 9 | `StreamAlreadyCompleted` | Attempting to cancel a stream that has fully vested (`now >= end_time`). |
+| 10 | `AmountTooLarge` | `total_amount` exceeds `i64::MAX`, the overflow-safety cap. |
+| 11 | `SenderIsRecipient` | `sender` and `recipient` are the same address. Streaming to yourself is a no-op that wastes fees; use a direct token transfer instead. |
+
+Code 2 is permanently retired and will never be assigned to a new variant.
 
 The contract publishes `Created`, `Withdrawn`, and `Cancelled` events, each
 carrying the parties as topics so an indexer can filter streams by sender or
@@ -118,8 +135,8 @@ cargo clippy --all-targets   # lints
 The suite covers the vesting math in isolation and the contract end to end:
 stepwise withdrawal, partial withdrawal and its over-request and non-positive
 guards, cliff gating, cancellation splits, the `locked` and `progress` views
-across a stream's life, authorization requirements, invalid input, and
-double-withdraw and unknown-id guards.
+across a stream's life, authorization requirements, invalid input, self-stream
+rejection, and double-withdraw and unknown-id guards.
 
 ## Deploying to testnet
 

@@ -791,3 +791,74 @@ fn vesting_with_max_amount_over_long_duration_does_not_overflow() {
     t.set_time(end);
     assert_eq!(t.contract.vested(&id), MAX_AMOUNT);
 }
+
+// ── Self-stream rejection (issue #9) ────────────────────────────────────────
+
+/// Passing the same address as both sender and recipient must be rejected.
+/// This is almost always a copy-paste mistake in the caller, and the stream
+/// would be a no-op: the account locks tokens into the contract and can
+/// immediately withdraw them back out.
+#[test]
+fn create_stream_rejects_sender_equal_to_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let result = t.contract.try_create_stream(
+        &t.sender,
+        &t.sender, // recipient == sender
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(result, Err(Ok(StreamError::SenderIsRecipient)));
+
+    // No stream was created and no funds left the sender.
+    assert_eq!(t.contract.stream_count(), 0);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+}
+
+/// The rejection fires even when every other parameter would be valid,
+/// confirming the guard is not accidentally bypassed by a well-formed schedule.
+#[test]
+fn self_stream_rejection_is_independent_of_other_parameters() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    // Vary the amount and time window to show the check is unconditional.
+    let result = t.contract.try_create_stream(
+        &t.recipient,
+        &t.recipient, // both sender and recipient are t.recipient
+        &t.token_address,
+        &500,
+        &200,
+        &2_000,
+        &200,
+    );
+    assert_eq!(result, Err(Ok(StreamError::SenderIsRecipient)));
+
+    assert_eq!(t.contract.stream_count(), 0);
+}
+
+/// A distinct sender and recipient must still be accepted normally,
+/// confirming the guard does not accidentally widen and block legitimate calls.
+#[test]
+fn create_stream_accepts_distinct_sender_and_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient, // different address
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    assert_eq!(id, 0);
+    assert_eq!(t.contract.stream_count(), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+}
