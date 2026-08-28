@@ -7,8 +7,9 @@ use crate::types::Stream;
 /// streams plenty of headroom between touches.
 pub(crate) const ENTRY_TTL: u32 = 518_400;
 /// When an accessed entry has fewer than this many ledgers left, extend it
-/// back up to `ENTRY_TTL`.
-const BUMP_THRESHOLD: u32 = 103_680;
+/// back up to `ENTRY_TTL`. Above this mark an access is a no-op, so an entry
+/// touched often does not pay to be re-extended on every read.
+pub(crate) const BUMP_THRESHOLD: u32 = 103_680;
 
 /// Keys for entries the contract keeps in storage.
 #[contracttype]

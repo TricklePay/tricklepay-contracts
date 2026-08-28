@@ -1,13 +1,15 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{storage::Instance as _, Address as _, Events as _, Ledger as _},
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Events as _, Ledger as _,
+    },
     token, vec, Address, Env, Vec,
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
-use crate::storage::{self, ENTRY_TTL};
-use crate::storage::DataKey;
+use crate::storage::{self, DataKey, BUMP_THRESHOLD, ENTRY_TTL};
 use crate::{Stream, StreamError, StreamStatus, MAX_AMOUNT};
 
 /// A fully wired test environment: a registered stream contract, a token to
@@ -181,6 +183,14 @@ impl<'a> StreamTest<'a> {
         let address = self.contract.address.clone();
         self.env
             .as_contract(&address, || self.env.storage().instance().has(key))
+    }
+
+    /// Ledgers of life remaining on the persistent entry holding stream `id`.
+    pub fn stream_ttl(&self, id: u64) -> u32 {
+        let address = self.contract.address.clone();
+        self.env.as_contract(&address, || {
+            self.env.storage().persistent().get_ttl(&DataKey::Stream(id))
+        })
     }
 }
 
@@ -1722,4 +1732,167 @@ fn rejected_create_writes_no_storage_key() {
 
     assert!(!t.persistent_has(&DataKey::Stream(0)));
     t.assert_nothing_happened(1_000);
+}
+
+// --- Persistent entry TTL ---------------------------------------------------
+//
+// Stream records live in persistent storage, which expires on a ledger clock
+// rather than a wall clock. A stream that outlives its entry's time to live is
+// archived and stops answering, so `storage::get_stream` and
+// `storage::set_stream` bump every entry they touch back up to `ENTRY_TTL`
+// once it drops below `BUMP_THRESHOLD`.
+//
+// These are regression tests for that bump. Note that they check the TTL
+// directly rather than checking whether a stream still reads back: the
+// in-memory test host silently restores an expired persistent entry on access
+// instead of archiving it, so a stream with a dead TTL would still answer here
+// while failing on a real network.
+
+/// A freshly created stream starts with the full `ENTRY_TTL` window, not the
+/// ledger's much shorter default for new persistent entries.
+#[test]
+fn create_stream_gives_the_record_the_full_entry_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let default_ttl = t.env.ledger().get().min_persistent_entry_ttl;
+    assert!(
+        default_ttl < ENTRY_TTL,
+        "expected the default persistent entry TTL to be shorter than ENTRY_TTL"
+    );
+
+    let id = t.open_default_stream(1_000);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+}
+
+/// The entry's remaining life is measured in ledgers, so advancing the ledger
+/// sequence draws it down one for one.
+#[test]
+fn a_stream_entry_ttl_decays_with_the_ledger_sequence() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // Stay well above the bump threshold so nothing is refreshed yet.
+    let elapsed = 1_000;
+    t.set_sequence(elapsed);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL - elapsed);
+}
+
+/// Reading a stream once its entry has fallen below `BUMP_THRESHOLD` restores
+/// the full window. This is the bump that keeps a long-running stream from
+/// being archived out from under its recipient.
+#[test]
+fn reading_a_stream_below_the_threshold_restores_the_full_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // Advance far enough that fewer than BUMP_THRESHOLD ledgers remain.
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    assert!(ENTRY_TTL - elapsed < BUMP_THRESHOLD);
+
+    // A plain view call goes through `storage::get_stream`, which bumps.
+    t.contract.get_stream(&id);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+}
+
+/// Above the threshold a read deliberately does nothing: an entry with plenty
+/// of life left should not pay to be re-extended on every access.
+#[test]
+fn reading_a_stream_above_the_threshold_leaves_the_ttl_alone() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // One ledger short of the point where the bump kicks in.
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD - 1;
+    t.set_sequence(elapsed);
+    assert!(ENTRY_TTL - elapsed > BUMP_THRESHOLD);
+
+    t.contract.get_stream(&id);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL - elapsed);
+}
+
+/// Writing a stream refreshes it on the same schedule as reading one, so a
+/// withdrawal late in a stream's life also renews the entry that records it.
+#[test]
+fn withdrawing_restores_a_decayed_stream_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+
+    // Move the wall clock to the midpoint so there is something to withdraw.
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw(&id), 500);
+
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+    // The write went to the same entry it refreshed.
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+}
+
+/// Cancelling refreshes the entry too. A cancelled stream still holds the
+/// recipient's accrued balance, so its record has to stay alive for them to
+/// come back and claim it.
+#[test]
+fn cancelling_restores_a_decayed_stream_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+
+    t.set_time(600);
+    assert_eq!(t.contract.cancel(&id), 500);
+
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+}
+
+/// Each stream carries its own entry. Touching one does not extend another, so
+/// an idle stream cannot be kept alive by traffic on a busy one — and, more to
+/// the point, a bump never lands on the wrong key.
+#[test]
+fn bumping_one_stream_does_not_extend_another() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let busy = t.open_default_stream(1_000);
+    let idle = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+
+    t.contract.get_stream(&busy);
+
+    assert_eq!(t.stream_ttl(busy), ENTRY_TTL);
+    assert_eq!(t.stream_ttl(idle), ENTRY_TTL - elapsed);
+}
+
+/// A stream that is touched every time its entry nears expiry keeps rolling
+/// forward indefinitely, which is what makes a stream longer than `ENTRY_TTL`
+/// workable at all.
+#[test]
+fn repeated_bumps_keep_a_stream_entry_alive_indefinitely() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // Three full cycles, each one advancing until the entry is nearly spent
+    // and then touching it.
+    let step = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    for cycle in 1..=3u32 {
+        t.set_sequence(step * cycle);
+        t.contract.get_stream(&id);
+        assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+    }
+
+    // Total ledgers elapsed exceed a single ENTRY_TTL window, yet the record
+    // is intact.
+    assert!(step * 3 > ENTRY_TTL);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 1_000);
 }
