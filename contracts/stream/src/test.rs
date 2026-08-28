@@ -449,6 +449,54 @@ fn cancel_after_partial_withdrawal() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// Cancel in the last instant the contract still allows: one second before
+/// `end_time`. `cancel` is documented to fail once `now >= end_time`, so this
+/// is the tightest window in which a stream can still be cancelled. Only the
+/// final unvested sliver is refunded, the stream freezes at the vested amount,
+/// and the recipient keeps everything that has accrued. A regression in the
+/// boundary (`StreamAlreadyCompleted` firing early) or in the refund arithmetic
+/// at `end_time - 1` fails here.
+#[test]
+fn cancel_immediately_before_end_time() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // One second before the end: still Streaming, the last valid cancel moment.
+    t.set_time(1_099);
+    assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+
+    // 999 of 1000 has vested. The refund is the remaining 1, not the whole
+    // locked balance.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 1);
+    assert_eq!(t.token.balance(&t.sender), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 999);
+
+    // The stream is frozen at the vested amount with the window closed at the
+    // cancellation instant.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 999);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.end_time, 1_099);
+
+    // The recipient's accrued 999 is still fully claimable; the split adds up
+    // to the original total and the contract is drained.
+    assert_eq!(t.contract.withdrawable(&id), 999);
+    assert_eq!(t.contract.withdraw(&id), 999);
+    assert_eq!(t.token.balance(&t.recipient), 999);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
 // ── Post-cancellation view correctness ──────────────────────────────────────
 
 /// `cancel` rewrites `total_amount`, `start_time`, `cliff_time`, and
