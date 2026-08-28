@@ -7,7 +7,8 @@ use soroban_sdk::{
 
 use crate::contract::{StreamContract, StreamContractClient};
 use crate::storage::{self, ENTRY_TTL};
-use crate::{StreamError, StreamStatus, MAX_AMOUNT};
+use crate::storage::DataKey;
+use crate::{Stream, StreamError, StreamStatus, MAX_AMOUNT};
 
 /// A fully wired test environment: a registered stream contract, a token to
 /// stream, and helpers to fund accounts and move the ledger clock.
@@ -156,6 +157,30 @@ impl<'a> StreamTest<'a> {
             self.token_address.clone(),
             self.contract.address.clone(),
         ]
+    }
+
+    /// Whether a persistent entry exists under `key`, read straight out of the
+    /// contract's storage rather than through an entry point. Entry points
+    /// answer `StreamNotFound` for both "no such key" and "key holds
+    /// something unexpected", so key-level questions have to be asked here.
+    pub fn persistent_has(&self, key: &DataKey) -> bool {
+        let address = self.contract.address.clone();
+        self.env
+            .as_contract(&address, || self.env.storage().persistent().has(key))
+    }
+
+    /// The stream stored under `key`, if the key holds one.
+    pub fn persistent_stream(&self, key: &DataKey) -> Option<Stream> {
+        let address = self.contract.address.clone();
+        self.env
+            .as_contract(&address, || self.env.storage().persistent().get(key))
+    }
+
+    /// Whether an instance entry exists under `key`.
+    pub fn instance_has(&self, key: &DataKey) -> bool {
+        let address = self.contract.address.clone();
+        self.env
+            .as_contract(&address, || self.env.storage().instance().has(key))
     }
 }
 
@@ -1556,4 +1581,145 @@ fn rejected_withdraw_publishes_no_events() {
     );
 
     assert_eq!(t.event_publishers_since(before), vec![&t.env]);
+}
+
+// --- Storage key encoding ---------------------------------------------------
+//
+// `DataKey` is the only thing standing between a stream record and the wrong
+// slot in storage. `StreamCount` and `Stream(id)` must encode to different
+// keys, every id must encode to its own key across the whole `u64` range, and
+// the two live in different storage types. None of that is checked by the
+// entry points, which report `StreamNotFound` whether a key is missing or
+// merely holds something unexpected — so these tests read the raw keys.
+
+/// Each stream id encodes to its own persistent key. Three streams written in
+/// a row occupy `Stream(0)`, `Stream(1)` and `Stream(2)` and do not overwrite
+/// one another; the id one past the last is absent rather than aliasing.
+#[test]
+fn stream_ids_map_to_distinct_persistent_keys() {
+    let t = StreamTest::setup(6_000);
+    t.set_time(100);
+
+    // Distinct amounts so an aliased key shows up as a wrong value, not just a
+    // wrong count.
+    let first = t.open_default_stream(1_000);
+    let second = t.open_default_stream(2_000);
+    let third = t.open_default_stream(3_000);
+    assert_eq!((first, second, third), (0, 1, 2));
+
+    assert!(t.persistent_has(&DataKey::Stream(0)));
+    assert!(t.persistent_has(&DataKey::Stream(1)));
+    assert!(t.persistent_has(&DataKey::Stream(2)));
+    assert!(!t.persistent_has(&DataKey::Stream(3)));
+
+    // Each key holds its own record.
+    assert_eq!(
+        t.persistent_stream(&DataKey::Stream(0)).unwrap().total_amount,
+        1_000
+    );
+    assert_eq!(
+        t.persistent_stream(&DataKey::Stream(1)).unwrap().total_amount,
+        2_000
+    );
+    assert_eq!(
+        t.persistent_stream(&DataKey::Stream(2)).unwrap().total_amount,
+        3_000
+    );
+}
+
+/// `StreamCount` and `Stream(0)` are different keys in different storage
+/// types. The counter must not be reachable as a stream, and stream zero must
+/// not be reachable as the counter — a collision would have the first stream
+/// silently overwrite the id sequence.
+#[test]
+fn stream_count_and_stream_zero_do_not_share_a_key() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    t.open_default_stream(1_000);
+
+    // The counter lives in instance storage only.
+    assert!(t.instance_has(&DataKey::StreamCount));
+    assert!(!t.persistent_has(&DataKey::StreamCount));
+
+    // The stream lives in persistent storage only.
+    assert!(t.persistent_has(&DataKey::Stream(0)));
+    assert!(!t.instance_has(&DataKey::Stream(0)));
+
+    // And the counter still reads back as a count, not as a stream record.
+    assert_eq!(t.contract.stream_count(), 1);
+}
+
+/// Key encoding has to hold at the top of the id range too, where a truncating
+/// or wrapping encoding would be easiest to miss. A stream created at
+/// `u64::MAX - 1` lands on exactly that key and nowhere near `Stream(0)`.
+#[test]
+fn boundary_stream_ids_encode_to_their_own_keys() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    t.set_stream_count(u64::MAX - 1);
+
+    let id = t.open_default_stream(1_000);
+    assert_eq!(id, u64::MAX - 1);
+
+    assert!(t.persistent_has(&DataKey::Stream(u64::MAX - 1)));
+    assert!(!t.persistent_has(&DataKey::Stream(u64::MAX)));
+    assert!(!t.persistent_has(&DataKey::Stream(0)));
+
+    // The record found under the boundary key is the one that was written.
+    assert_eq!(
+        t.persistent_stream(&DataKey::Stream(u64::MAX - 1))
+            .unwrap()
+            .total_amount,
+        1_000
+    );
+}
+
+/// A stream round-trips through its key unchanged: what `get_stream` returns
+/// is byte-for-byte what sits under `Stream(id)`, so no field is lost or
+/// reordered by serialization.
+#[test]
+fn stream_records_round_trip_under_their_key() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &200,
+        &1_200,
+        &400, // a real cliff, so cliff_time is not just a copy of start_time
+    );
+
+    let stored = t.persistent_stream(&DataKey::Stream(id)).unwrap();
+    assert_eq!(stored, t.contract.get_stream(&id));
+
+    // Spot-check the fields most likely to be confused with one another.
+    assert_eq!(stored.start_time, 200);
+    assert_eq!(stored.cliff_time, 400);
+    assert_eq!(stored.end_time, 1_200);
+    assert_eq!(stored.withdrawn, 0);
+    assert!(!stored.cancelled);
+}
+
+/// A creation rejected because the contract's own address was passed as
+/// `recipient` writes no key at all. The participant checks run before the
+/// transfer and before storage, so `Stream(0)` stays empty and the id is not
+/// consumed.
+#[test]
+fn rejected_create_writes_no_storage_key() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let contract_address = t.contract.address.clone();
+    assert!(t.try_create_stream_for_raw(
+        &t.sender,
+        &contract_address,
+        &t.token_address,
+        1_000
+    ));
+
+    assert!(!t.persistent_has(&DataKey::Stream(0)));
+    t.assert_nothing_happened(1_000);
 }
