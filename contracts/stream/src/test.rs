@@ -1896,3 +1896,160 @@ fn repeated_bumps_keep_a_stream_entry_alive_indefinitely() {
     assert!(step * 3 > ENTRY_TTL);
     assert_eq!(t.contract.get_stream(&id).total_amount, 1_000);
 }
+
+// --- Instance TTL -----------------------------------------------------------
+//
+// The contract instance holds `DataKey::StreamCount`, the source of every
+// stream id. Nothing bumps it as a side effect of being read, so
+// `create_stream` extends it explicitly on the same schedule as stream
+// entries. If that bump were dropped, an instance left untouched past its
+// lifetime would be archived and take the id sequence with it — a fresh
+// counter would restart at zero and the next stream would be written over
+// stream 0, which still exists in persistent storage with its own longer TTL.
+//
+// As with the persistent-entry tests, these assert the TTL directly. The
+// in-memory test host restores an archived entry on access rather than
+// failing, so "the counter still answers" proves nothing on its own.
+
+/// Creating a stream lifts the instance from the ledger's short default to the
+/// same `ENTRY_TTL` window the stream record gets.
+#[test]
+fn create_stream_lifts_the_instance_to_the_full_entry_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let default_ttl = t.instance_ttl();
+    assert!(
+        default_ttl < ENTRY_TTL,
+        "expected the default instance TTL to be shorter than ENTRY_TTL"
+    );
+
+    let id = t.open_default_stream(1_000);
+
+    // The counter and the stream it numbered expire together, so neither can
+    // outlive the other.
+    assert_eq!(t.instance_ttl(), ENTRY_TTL);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+}
+
+/// The instance TTL is measured in ledgers and decays one for one, exactly
+/// like a persistent entry.
+#[test]
+fn the_instance_ttl_decays_with_the_ledger_sequence() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    t.open_default_stream(1_000);
+
+    let elapsed = 1_000;
+    t.set_sequence(elapsed);
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+}
+
+/// A later creation restores a decayed instance to the full window. This is
+/// the bump that keeps a long-lived contract's id sequence alive.
+#[test]
+fn a_later_create_restores_a_decayed_instance_ttl() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    t.open_default_stream(1_000);
+
+    // Advance until the instance is nearly spent.
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+
+    t.open_default_stream(1_000);
+    assert_eq!(t.instance_ttl(), ENTRY_TTL);
+}
+
+/// Read-only traffic does not extend the instance. Only `create_stream` bumps
+/// it, so a contract that is queried constantly but never written to still
+/// runs its instance down — this pins the current behaviour so a change to it
+/// is a deliberate one.
+#[test]
+fn view_calls_do_not_extend_the_instance_ttl() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    t.set_time(600);
+
+    // Reading a stream bumps that stream's own entry...
+    t.contract.get_stream(&id);
+    t.contract.withdrawable(&id);
+    t.contract.stream_count();
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+
+    // ...but leaves the instance where it was.
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+}
+
+/// Withdrawing and cancelling do not extend the instance either. They write a
+/// stream entry, not the counter, so the instance is untouched.
+#[test]
+fn withdraw_and_cancel_do_not_extend_the_instance_ttl() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let first = t.open_default_stream(1_000);
+    let second = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    t.set_time(600);
+
+    t.contract.withdraw(&first);
+    t.contract.cancel(&second);
+
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+}
+
+/// The instance keeps rolling forward as long as streams keep being created,
+/// so a contract in continuous use never loses its id sequence no matter how
+/// many `ENTRY_TTL` windows have gone by.
+#[test]
+fn repeated_creates_keep_the_instance_alive_indefinitely() {
+    // Four streams inside the loop plus one after it.
+    let t = StreamTest::setup(5_000);
+    t.set_time(100);
+    t.open_default_stream(1_000);
+
+    let step = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    for cycle in 1..=3u32 {
+        t.set_sequence(step * cycle);
+        t.open_default_stream(1_000);
+        assert_eq!(t.instance_ttl(), ENTRY_TTL);
+    }
+
+    // More ledgers have elapsed than a single window covers, and the counter
+    // has still never restarted: ids are contiguous and none was reused.
+    assert!(step * 3 > ENTRY_TTL);
+    assert_eq!(t.contract.stream_count(), 4);
+    assert_eq!(t.open_default_stream(1_000), 4);
+}
+
+/// The regression this bump exists to prevent: if the instance were archived
+/// and its counter reset to zero, a new stream would take id 0 and overwrite
+/// the record already sitting under `Stream(0)`. Ids must keep advancing past
+/// a long idle gap, and the original record must survive intact.
+#[test]
+fn ids_never_restart_after_a_long_idle_gap() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let first = t.open_default_stream(1_000);
+    assert_eq!(first, 0);
+
+    // Idle for longer than the instance's default lifetime would have allowed.
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+
+    let second = t.open_default_stream(1_000);
+    assert_eq!(second, 1);
+    assert_eq!(t.contract.stream_count(), 2);
+
+    // Stream 0 was not overwritten by stream 1.
+    assert!(t.persistent_has(&DataKey::Stream(0)));
+    assert!(t.persistent_has(&DataKey::Stream(1)));
+    assert_eq!(t.contract.get_stream(&first).total_amount, 1_000);
+}
