@@ -497,6 +497,62 @@ fn cancel_immediately_before_end_time() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// Cancel a stream before its cliff has been reached.
+///
+/// Nothing has vested yet, so the recipient keeps nothing and the whole amount
+/// goes back to the sender. The stream is frozen at a zero total with the
+/// window closed at the cancellation instant, and nothing is left claimable
+/// afterwards. A change to cliff gating, the refund, or the freeze that shifts
+/// this fails here.
+#[test]
+fn cancel_with_cliff_not_reached() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    // Cliff sits at the midpoint, so the first half of the stream vests
+    // nothing at all.
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &600,
+    );
+
+    // Past the start but before the cliff: nothing is claimable yet.
+    t.set_time(400);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+
+    // Cancelling with nothing vested refunds the entire amount to the sender.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 1_000);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+
+    // The stream is frozen with no balance left behind for the recipient.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 0);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.start_time, 100);
+    assert_eq!(stream.cliff_time, 400);
+    assert_eq!(stream.end_time, 400);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+
+    // Nothing remains for the recipient.
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+    assert_eq!(t.token.balance(&t.recipient), 0);
+}
+
 // ── Post-cancellation view correctness ──────────────────────────────────────
 
 /// `cancel` rewrites `total_amount`, `start_time`, `cliff_time`, and
