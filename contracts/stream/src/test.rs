@@ -100,28 +100,6 @@ impl<'a> StreamTest<'a> {
             &100,
         )
     }
-
-    /// Attempt to create a stream with explicit participant and token
-    /// overrides, using the standard schedule `[100, 1100]` with no cliff and
-    /// `amount`. The raw helper returns `true` if the call was rejected and
-    /// `false` if it succeeded — this keeps tests resilient to SDK client
-    /// return-shape changes.
-    pub fn try_create_stream_for_raw(
-        &self,
-        sender: &Address,
-        recipient: &Address,
-        token: &Address,
-        amount: i128,
-    ) -> bool {
-        let res = self
-            .contract
-            .try_create_stream(sender, recipient, token, &amount, &100, &1_100, &100);
-        match res {
-            Ok(Ok(_)) => false,
-            Ok(Err(_)) => true,
-            Err(_) => true,
-        }
-    }
 }
 
 #[test]
@@ -618,6 +596,105 @@ fn cancel_refunds_unvested_and_preserves_vested() {
         t.contract.try_cancel(&id),
         Err(Ok(StreamError::AlreadyCancelled))
     );
+}
+
+/// Cancel a stream the recipient has already partially withdrawn from.
+///
+/// The recipient keeps what they took, the sender gets back only the still
+/// unvested remainder, and the withdrawn balance survives into the frozen
+/// record so the same tokens can never be refunded twice. This pins the
+/// interaction between `withdraw_amount` and `cancel`; a change to vesting,
+/// authorization, or lifecycle accounting that breaks it fails here.
+#[test]
+fn cancel_after_partial_withdrawal() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // Midpoint: 500 vested, 500 still locked. The recipient takes 200 of the
+    // vested half and leaves 300 behind.
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+
+    // The sender cancels. The refund is the unvested half; the 200 already
+    // withdrawn is not double-refunded to the sender.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 500);
+    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.token.balance(&t.contract.address), 300);
+
+    // The stored stream is frozen at the vested amount with the prior
+    // withdrawal still accounted for.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 500);
+    assert_eq!(stream.withdrawn, 200);
+    assert_eq!(stream.end_time, 600);
+
+    // The recipient can still claim the rest of the vested balance; together
+    // with the 200 already taken that is the full vested 500, the split adds
+    // up to the original total, and the contract is drained.
+    assert_eq!(t.contract.withdrawable(&id), 300);
+    assert_eq!(t.contract.withdraw(&id), 300);
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+/// Cancel in the last instant the contract still allows: one second before
+/// `end_time`. `cancel` is documented to fail once `now >= end_time`, so this
+/// is the tightest window in which a stream can still be cancelled. Only the
+/// final unvested sliver is refunded, the stream freezes at the vested amount,
+/// and the recipient keeps everything that has accrued. A regression in the
+/// boundary (`StreamAlreadyCompleted` firing early) or in the refund arithmetic
+/// at `end_time - 1` fails here.
+#[test]
+fn cancel_immediately_before_end_time() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // One second before the end: still Streaming, the last valid cancel moment.
+    t.set_time(1_099);
+    assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+
+    // 999 of 1000 has vested. The refund is the remaining 1, not the whole
+    // locked balance.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 1);
+    assert_eq!(t.token.balance(&t.sender), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 999);
+
+    // The stream is frozen at the vested amount with the window closed at the
+    // cancellation instant.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 999);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.end_time, 1_099);
+
+    // The recipient's accrued 999 is still fully claimable; the split adds up
+    // to the original total and the contract is drained.
+    assert_eq!(t.contract.withdrawable(&id), 999);
+    assert_eq!(t.contract.withdraw(&id), 999);
+    assert_eq!(t.token.balance(&t.recipient), 999);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
 // ── Post-cancellation view correctness ──────────────────────────────────────
@@ -1187,8 +1264,40 @@ fn create_stream_accepts_past_start_time_with_future_end_time() {
     assert_eq!(t.token.balance(&t.recipient), 500);
 }
 
-/// `end_time` one second in the future is the tightest valid window. The
-/// stream must be accepted and its single vesting tick must settle correctly.
+// ── Timestamp boundary tests ─────────────────────────────────────────────────
+
+/// `start_time == 0` and a future `end_time` is a valid edge case: Unix epoch
+/// zero is a legal timestamp. The stream should be created, and since the
+/// current ledger time is well past epoch-zero, the elapsed portion should
+/// vest immediately.
+#[test]
+fn create_stream_accepts_start_time_of_zero() {
+    let t = StreamTest::setup(1_000);
+    // Ledger is at t=500, which is inside the window [0, 1000].
+    t.set_time(500);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &0,     // start_time = epoch zero
+        &1_000, // end_time in the future
+        &0,     // cliff == start (no cliff)
+    );
+
+    // A stream was created and tokens moved to the contract.
+    assert_eq!(t.contract.stream_count(), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+
+    // At t=500 exactly half the window [0,1000] has elapsed, so 500 is vested.
+    assert_eq!(t.contract.vested(&id), 500);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+    assert_eq!(t.contract.locked(&id), 500);
+}
+
+/// `end_time == now + 1` is the tightest valid window. The stream must be
+/// accepted and its single vesting tick must settle correctly.
 #[test]
 fn create_stream_accepts_end_time_one_second_in_the_future() {
     let t = StreamTest::setup(1_000);
