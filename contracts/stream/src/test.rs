@@ -697,6 +697,118 @@ fn cancel_immediately_before_end_time() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// Cancel the instant a stream has started.
+///
+/// The stream is created while still `Pending`, with its start one second in
+/// the future; the clock is then advanced one second past `start_time` and
+/// the sender cancels. Only a single second of the window has elapsed, so a
+/// tiny sliver has vested and the rest is refunded. This is what separates
+/// the start boundary from the cliff case: the stream freezes at that one
+/// vested unit rather than at zero, and the recipient can still claim it.
+/// A regression in the vesting math, the refund, or the freeze at the start
+/// boundary fails here.
+#[test]
+fn cancel_immediately_after_start() {
+    let t = StreamTest::setup(1_000);
+    // Stream over [100, 1100] whose start is still a moment in the future.
+    t.set_time(50);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(t.contract.status(&id), StreamStatus::Pending);
+
+    // One second after the start the stream is actively vesting, and 1 of
+    // 1000 has vested (1000 * 1 / 1000).
+    t.set_time(101);
+    assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+
+    // The refund is everything but the single vested unit.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 999);
+    assert_eq!(t.token.balance(&t.sender), 999);
+    assert_eq!(t.token.balance(&t.contract.address), 1);
+
+    // The stream freezes at the vested amount, the window closed one second
+    // after it opened.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 1);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.start_time, 100);
+    assert_eq!(stream.cliff_time, 100);
+    assert_eq!(stream.end_time, 101);
+
+    // The recipient still claims the single vested unit; the split adds up to
+    // the original total and the contract is drained.
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.withdrawable(&id), 1);
+    assert_eq!(t.contract.withdraw(&id), 1);
+    assert_eq!(t.token.balance(&t.recipient), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+/// Cancel a stream before its cliff has been reached.
+///
+/// Nothing has vested yet, so the recipient keeps nothing and the whole amount
+/// goes back to the sender. The stream is frozen at a zero total with the
+/// window closed at the cancellation instant, and nothing is left claimable
+/// afterwards. A change to cliff gating, the refund, or the freeze that shifts
+/// this fails here.
+#[test]
+fn cancel_with_cliff_not_reached() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    // Cliff sits at the midpoint, so the first half of the stream vests
+    // nothing at all.
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &600,
+    );
+
+    // Past the start but before the cliff: nothing is claimable yet.
+    t.set_time(400);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+
+    // Cancelling with nothing vested refunds the entire amount to the sender.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 1_000);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+
+    // The stream is frozen with no balance left behind for the recipient.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 0);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.start_time, 100);
+    assert_eq!(stream.cliff_time, 400);
+    assert_eq!(stream.end_time, 400);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+
+    // Nothing remains for the recipient.
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+    assert_eq!(t.token.balance(&t.recipient), 0);
+}
+
 // ── Post-cancellation view correctness ──────────────────────────────────────
 
 /// `cancel` rewrites `total_amount`, `start_time`, `cliff_time`, and
