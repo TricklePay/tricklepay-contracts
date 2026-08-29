@@ -361,6 +361,49 @@ fn withdraw_amount_available_plus_one_receives_insufficient_balance() {
     assert_eq!(t.contract.get_stream(&id).withdrawn, 0);
 }
 
+/// Issue #57 — Test partial withdrawals across multiple calls.
+///
+/// Build a fixture for a vesting stream (start=100, end=1100, no cliff) and
+/// draw `withdraw_amount` three times at increasing points in time. Each call
+/// must return the exact partial amount, move only that amount to the
+/// recipient, and accumulate correctly in the stored `withdrawn` field.
+#[test]
+fn test_partial_withdrawals_across_multiple_calls() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // First partial draw midway through: 500 vested, take 200.
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+    assert_eq!(t.token.balance(&t.contract.address), 800);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 200);
+
+    // Second partial draw later: 750 vested, take 300 more.
+    t.set_time(850);
+    assert_eq!(t.contract.withdraw_amount(&id, &300), 300);
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.token.balance(&t.contract.address), 500);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+
+    // Third and final draw at the end: the remaining 500 vests and is taken.
+    t.set_time(1_100);
+    assert_eq!(t.contract.withdraw_amount(&id, &500), 500);
+    assert_eq!(t.token.balance(&t.recipient), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 1_000);
+}
+
 #[test]
 fn cliff_blocks_withdrawal_until_reached() {
     let t = StreamTest::setup(1_000);
@@ -389,6 +432,131 @@ fn cliff_blocks_withdrawal_until_reached() {
     assert_eq!(t.contract.withdrawable(&id), 500);
     assert_eq!(t.contract.withdraw(&id), 500);
     assert_eq!(t.token.balance(&t.recipient), 500);
+}
+
+/// Issue #59 — Test withdrawal at exact cliff.
+///
+/// Build a fixture for a vesting stream with a cliff at the midpoint
+/// (start=100, cliff=600, end=1100). Move the clock to exactly `cliff_time`
+/// and withdraw. Everything accrued since the start unlocks in one step, so
+/// the call must return 500, move it to the recipient, and leave the other
+/// 500 still locked in the contract.
+#[test]
+fn test_withdraw_at_exact_cliff() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let start = 100u64;
+    let cliff = 600u64;
+    let end = 1_100u64;
+    let amount = 1_000i128;
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &amount,
+        &start,
+        &end,
+        &cliff,
+    );
+
+    // At exactly the cliff, the accrued half unlocks all at once.
+    t.set_time(cliff);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+    assert_eq!(t.contract.withdraw(&id), 500);
+
+    // The recipient received the vested half; the rest is still locked.
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.token.balance(&t.contract.address), 500);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+
+    // Nothing further vests until the clock advances again.
+    assert_eq!(t.contract.withdrawable(&id), 0);
+}
+
+/// Issue #60 — Test withdrawal at exact start.
+///
+/// Build a fixture for a vesting stream (start=600, end=1100, no cliff) and
+/// move the clock to exactly `start_time`. Zero time has elapsed at the exact
+/// start — the first token only vests one second later — so `withdraw` must be
+/// rejected with `NothingToWithdraw` and no tokens may move.
+#[test]
+fn test_withdraw_at_exact_start() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let start = 600u64;
+    let end = 1_100u64;
+    let amount = 1_000i128;
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &amount,
+        &start,
+        &end,
+        &start,
+    );
+
+    // One second before the start nothing is available either.
+    t.set_time(start - 1);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+
+    // At exactly start_time zero time has elapsed, so nothing has vested.
+    t.set_time(start);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+
+    // The rejection moved nothing and left the stream untouched.
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.token.balance(&t.contract.address), amount);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 0);
+    assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+}
+
+/// Issue #58 — Test withdrawal after full vesting.
+///
+/// Build a fixture for a vesting stream (start=100, end=1100, no cliff) and
+/// advance the clock well past `end_time`. The whole amount is vested, so a
+/// single `withdraw` must return the full 1 000, drain the contract, and mark
+/// the stored `withdrawn` field as fully taken.
+#[test]
+fn test_withdraw_after_full_vesting() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let start = 100u64;
+    let end = 1_100u64;
+    let amount = 1_000i128;
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &amount,
+        &start,
+        &end,
+        &start,
+    );
+
+    // Long after the window closes the stream is fully vested.
+    t.set_time(end + 1_000);
+    assert_eq!(t.contract.status(&id), StreamStatus::Completed);
+    assert_eq!(t.contract.withdrawable(&id), amount);
+
+    // A single withdraw releases the entire balance.
+    assert_eq!(t.contract.withdraw(&id), amount);
+    assert_eq!(t.token.balance(&t.recipient), amount);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, amount);
+
+    // Nothing remains to withdraw.
+    assert_eq!(t.contract.withdrawable(&id), 0);
 }
 
 #[test]
