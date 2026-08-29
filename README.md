@@ -31,13 +31,19 @@ A stream is defined by a total amount and a window of time:
 
   **A stream has no cliff when `cliff_time == start_time`.** There is no
   separate flag or null value to pass — the cliff is always a timestamp, and
-  setting it to the start makes the gate vacuous. The contract withholds
+  setting it to the start makes the gate vacuous. `vested_amount` withholds
   everything while `now < cliff_time || now < start_time`, so when the two are
   equal that reduces to `now < start_time`: exactly the start check every
   stream already applies. The no-cliff case is not special-cased anywhere in
-  the vesting math, it simply falls out of the same expression. At the other
-  end of the range, `cliff_time == end_time` is equally valid and withholds
-  everything until the window closes — a pure lockup that vests in one step.
+  the vesting math, it simply falls out of the same expression, and from
+  `start_time` onward the amount is the plain linear
+  `total_amount * elapsed / duration`. At the other end of the range,
+  `cliff_time == end_time` is equally valid and withholds everything until the
+  window closes — a pure lockup that vests in one step.
+
+  A no-cliff stream is what `create_stream(sender, recipient, token, 1000, 100,
+  1100, 100)` opens, and it is the shape most of the contract tests use. Its
+  schedule is tabulated under [Example schedule](#example-schedule) below.
 - **Withdraw** sends the recipient whatever has vested minus what they have
   already taken. A partial withdrawal (`withdraw_amount`) names a figure
   instead and transfers exactly that, up to the same balance; whatever is left
@@ -257,6 +263,48 @@ For a contract-only consumer with no event access:
 
 This is O(n) over all streams and is only suitable for small deployments or one-off queries. Production consumers should use event indexing.
 
+## Storage lifetime
+
+Soroban storage entries expire on a ledger clock and are archived once their
+time to live runs out. The contract keeps two kinds of entry alive on the same
+schedule:
+
+| Entry | Storage type | Holds |
+| --- | --- | --- |
+| `DataKey::Stream(id)` | persistent | one stream record |
+| `DataKey::StreamCount` | instance | the id to assign to the next stream |
+
+Both are granted `ENTRY_TTL` — 518,400 ledgers, roughly thirty days at the
+standard five second close time — and both are extended back to that full
+window whenever they are touched with fewer than `BUMP_THRESHOLD` (103,680
+ledgers, roughly six days) remaining. Above that mark a touch is a deliberate
+no-op, so an entry in frequent use does not pay to be re-extended on every
+access.
+
+The two are refreshed by different things:
+
+- **Stream entries** are bumped as a side effect of being read or written, so
+  `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, `status`,
+  `withdraw`, `withdraw_amount`, and `cancel` all renew the stream they touch.
+  A stream that is looked at even once every few weeks never expires, and a
+  stream may run far longer than a single `ENTRY_TTL` window.
+- **The instance** is bumped only by `create_stream`. Nothing renews it as a
+  side effect of a read, so a contract that is queried but never written to
+  will run its instance down.
+
+That second point is why `create_stream` extends the instance explicitly. The
+counter is the source of every id and never reuses one; if the instance were
+archived, a fresh counter would restart at zero and the next stream would be
+written over the record still sitting under `Stream(0)`. Extending the instance
+on the same schedule as stream entries keeps the counter alive for as long as
+the streams it numbers.
+
+**Limitation:** a stream left completely untouched for longer than `ENTRY_TTL`
+is archived like any other Soroban entry. Recovering it requires a restore
+operation submitted off-contract; the contract itself offers no way to revive
+an archived stream. Callers holding long-dated streams should read them
+periodically — any view call is enough.
+
 ## Security model
 
 **The contract has no pause, freeze, or emergency-stop function.** There is no
@@ -319,6 +367,12 @@ boundary time-window rejection, backdated-start acceptance, id-counter
 exhaustion at the `u64::MAX` boundary, rejection of the contract's own address
 in each participant role, self-streams, the documented precedence between
 validation groups, and double-withdraw and unknown-id guards.
+
+It also covers the storage and event behaviour described above: the order in
+which each entry point moves tokens and publishes its event, the silence of a
+rejected call on the event stream, `DataKey` encoding across the id range, and
+the persistent-entry and instance time-to-live bumps on both sides of
+`BUMP_THRESHOLD`.
 
 ## Deploying to testnet
 
