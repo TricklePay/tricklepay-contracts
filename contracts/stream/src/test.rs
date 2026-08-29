@@ -497,6 +497,62 @@ fn cancel_immediately_before_end_time() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// Cancel the instant a stream has started.
+///
+/// The stream is created while still `Pending`, with its start one second in
+/// the future; the clock is then advanced one second past `start_time` and
+/// the sender cancels. Only a single second of the window has elapsed, so a
+/// tiny sliver has vested and the rest is refunded. This is what separates
+/// the start boundary from the cliff case: the stream freezes at that one
+/// vested unit rather than at zero, and the recipient can still claim it.
+/// A regression in the vesting math, the refund, or the freeze at the start
+/// boundary fails here.
+#[test]
+fn cancel_immediately_after_start() {
+    let t = StreamTest::setup(1_000);
+    // Stream over [100, 1100] whose start is still a moment in the future.
+    t.set_time(50);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(t.contract.status(&id), StreamStatus::Pending);
+
+    // One second after the start the stream is actively vesting, and 1 of
+    // 1000 has vested (1000 * 1 / 1000).
+    t.set_time(101);
+    assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+
+    // The refund is everything but the single vested unit.
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 999);
+    assert_eq!(t.token.balance(&t.sender), 999);
+    assert_eq!(t.token.balance(&t.contract.address), 1);
+
+    // The stream freezes at the vested amount, the window closed one second
+    // after it opened.
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 1);
+    assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.start_time, 100);
+    assert_eq!(stream.cliff_time, 100);
+    assert_eq!(stream.end_time, 101);
+
+    // The recipient still claims the single vested unit; the split adds up to
+    // the original total and the contract is drained.
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.withdrawable(&id), 1);
+    assert_eq!(t.contract.withdraw(&id), 1);
+    assert_eq!(t.token.balance(&t.recipient), 1);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
 /// Cancel a stream before its cliff has been reached.
 ///
 /// Nothing has vested yet, so the recipient keeps nothing and the whole amount
