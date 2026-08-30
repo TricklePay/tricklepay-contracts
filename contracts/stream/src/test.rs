@@ -5,10 +5,11 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events as _, Ledger as _,
     },
-    token, vec, xdr, Address, Env, TryFromVal, Vec,
+    token, vec, xdr, Address, Env, Event, TryFromVal, Vec,
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
+use crate::events::{Cancelled, Created, Withdrawn};
 use crate::storage::{self, DataKey, BUMP_THRESHOLD, ENTRY_TTL};
 use crate::{Stream, StreamError, StreamStatus, MAX_AMOUNT};
 
@@ -162,6 +163,17 @@ impl<'a> StreamTest<'a> {
             self.token_address.clone(),
             self.contract.address.clone(),
         ]
+    }
+
+    /// Assert the latest stream event carries the expected topic list.
+    pub fn assert_latest_stream_event_topics(&self, expected: xdr::ContractEvent) {
+        let all_events = self.env.events().all();
+        let latest = all_events.events().last().unwrap();
+        let xdr::ContractEventBody::V0(latest_body) = &latest.body;
+        let xdr::ContractEventBody::V0(expected_body) = &expected.body;
+        assert_eq!(latest.ext, expected.ext);
+        assert_eq!(latest.type_, expected.type_);
+        assert_eq!(latest_body.topics, expected_body.topics);
     }
 
     /// Whether a persistent entry exists under `key`, read straight out of the
@@ -1942,6 +1954,91 @@ fn lifecycle_events_follow_operation_order() {
     t.set_time(700);
     t.contract.cancel(&id);
     assert_eq!(t.event_publishers(), t.transfer_then_announce());
+}
+
+#[test]
+fn created_event_topics_index_sender_and_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &750,
+        &100,
+        &1_100,
+        &400,
+    );
+
+    assert_eq!(id, 0);
+    t.assert_latest_stream_event_topics(
+        Created {
+            sender: t.sender.clone(),
+            recipient: t.recipient.clone(),
+            id,
+            token: t.token_address.clone(),
+            total_amount: 750,
+            start_time: 100,
+            end_time: 1_100,
+            cliff_time: 400,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    let stream = t.contract.get_stream(&id);
+    assert_eq!(stream.sender, t.sender);
+    assert_eq!(stream.recipient, t.recipient);
+    assert_eq!(stream.token, t.token_address);
+    assert_eq!(t.token.balance(&t.contract.address), 750);
+}
+
+#[test]
+fn withdrawn_event_topics_index_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    let amount = t.contract.withdraw(&id);
+
+    assert_eq!(amount, 500);
+    t.assert_latest_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+}
+
+#[test]
+fn cancelled_event_topics_index_sender() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    let refund = t.contract.cancel(&id);
+
+    assert_eq!(refund, 500);
+    t.assert_latest_stream_event_topics(
+        Cancelled {
+            sender: t.sender.clone(),
+            id,
+            recipient_amount: 500,
+            sender_refund: refund,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 500);
 }
 
 /// A creation rejected for an invalid participant publishes nothing: the
