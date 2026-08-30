@@ -56,9 +56,10 @@ A stream is defined by a total amount and a window of time:
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
-rendering a progress bar. Cancelling freezes the total at whatever had vested,
-so a cancelled stream reports nothing locked and full progress even when it was
-stopped early.
+rendering a progress bar (for example, a value of 5000 means 50%). Cancelling
+freezes the total at whatever had vested, so a cancelled stream reports nothing
+locked and full progress (10000) even when it was stopped early. A stream with
+a `total_amount` of zero also reports full progress (10000) at all times.
 
 All amounts are in the token's smallest unit. All times are Unix timestamps in
 seconds, matching the ledger clock.
@@ -327,9 +328,9 @@ out-of-scope risks — are in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Building
 
-Rust 1.84 or newer with the `wasm32v1-none` target is required; the pinned
-versions are in `rust-toolchain.toml`. Note that `wasm32-unknown-unknown` does
-not work: on Rust 1.82+ it enables wasm features the Soroban environment does
+**Minimum Supported Rust Version (MSRV):** The MSRV is `1.84.0`. This recent toolchain is required because `soroban-sdk` targets `wasm32v1-none`. The pinned versions are in `rust-toolchain.toml`.
+
+Note that `wasm32-unknown-unknown` does not work: on Rust 1.82+ it enables wasm features the Soroban environment does
 not support, and soroban-sdk fails the build rather than produce a bad artifact.
 
 ```bash
@@ -383,6 +384,50 @@ contract. It expects a funded identity configured with `stellar keys`.
 ```bash
 ./scripts/deploy.sh <identity-name>
 ```
+
+## Troubleshooting
+
+### Wrong build target
+If you see an error when building that mentions unsupported WebAssembly features or the wrong target:
+```text
+error: compiling for `wasm32-unknown-unknown` is not supported
+```
+**Fix:** Soroban SDK requires the newer target on recent Rust versions. Always build with `--target wasm32v1-none` instead of `wasm32-unknown-unknown`.
+
+### Missing toolchain component
+If you see an error indicating that the standard library cannot be found:
+```text
+error[E0463]: can't find crate for `core`
+  = note: the `wasm32v1-none` target may not be installed
+```
+**Fix:** Add the required WebAssembly target to your Rust toolchain by running:
+`rustup target add wasm32v1-none`
+
+### Unfunded identity
+When running the deployment script, if you encounter an error like:
+```text
+error: account not found
+```
+or a transaction failure due to insufficient XLM on testnet.
+**Fix:** Make sure the identity you are using is funded by running:
+`stellar keys fund <identity-name> --network testnet`
+
+## Frequently asked questions
+
+**1. Why are funds locked up front?**
+To guarantee that the recipient will actually receive the streamed tokens, the entire `total_amount` is pulled into the contract immediately upon creation. This prevents the sender from spending the funds elsewhere before they vest. See [THREAT_MODEL.md](THREAT_MODEL.md) for details on the security implications of this lock-up.
+
+**2. What happens if the project's servers disappear?**
+The stream lives entirely on the Stellar ledger as a smart contract. You can interact with it using any Stellar Horizon or RPC node, even if our frontend or indexer goes down. The security model ensures that you do not depend on any off-chain infrastructure. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**3. Can I pause or freeze a stream?**
+No. There is no pause, freeze, or emergency-stop function. The only escape hatch is the sender's `cancel` function, which stops the stream and refunds only the unvested portion. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**4. Are there any admin keys that can steal or lock my funds?**
+No, there is no admin or owner account. The deployed bytecode is immutable, meaning no privileged key can upgrade the contract, halt streams, or confiscate tokens. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**5. How do I enumerate my streams?**
+On-chain enumeration is not supported to save on storage and gas costs. You should use the `Created` event to index streams off-chain. See the Stream enumeration section above for more details.
 
 ## Project structure
 
