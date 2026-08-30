@@ -370,8 +370,9 @@ self-streams, the documented precedence between validation groups, and
 double-withdraw and unknown-id guards.
 
 It also covers the storage and event behaviour described above: the order in
-which each entry point moves tokens and publishes its event, the silence of a
-rejected call on the event stream, `DataKey` encoding across the id range, and
+which each entry point moves tokens and publishes its event, the Created,
+Withdrawn, and Cancelled payload fields, the silence of a rejected call on
+the event stream, `DataKey` encoding across the id range, and
 the persistent-entry and instance time-to-live bumps on both sides of
 `BUMP_THRESHOLD`.
 
