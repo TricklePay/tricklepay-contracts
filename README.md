@@ -14,6 +14,14 @@ web client that build on it live in separate repositories; see
 
 ## How a stream works
 
+**All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
+
+**Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
+- January 1, 2025 00:00:00 UTC = `1735689600` seconds since the Unix epoch (not `1735689600000` milliseconds).
+- February 1, 2025 00:00:00 UTC = `1738368000` seconds.
+
+Call `create_stream(sender, recipient, token, total_amount, 1735689600, 1738368000, 1735689600)` where `cliff_time == start_time` represents the no-cliff case. The ledger clock increments in seconds, so vesting progresses one second at a time from `start_time` toward `end_time`.
+
 A stream is defined by a total amount and a window of time:
 
 - **Start and end** bound the linear release. At the start nothing has vested;
@@ -92,6 +100,18 @@ With a cliff at the midpoint, `cliff_time == 600`:
 The two schedules agree everywhere from the cliff onward. A cliff does not
 change the rate or the total, it only withholds the earlier portion and then
 releases it in one step.
+
+### Boundary and edge-case notes
+
+A few common edge cases are worth keeping explicit:
+
+- An exact-end withdrawal is valid: once `now >= end_time`, the stream is fully
+  vested and `withdraw` can move the remaining balance out in one call.
+- A stream with `cliff_time == start_time` is a normal stream with no cliff; the
+  vesting logic simply reduces to the standard start-time gate.
+- Cancellation is never retroactive. The recipient keeps all vested funds up to
+  the cancellation instant, and the sender receives only the remaining unvested
+  balance.
 
 ### Integer rounding
 
