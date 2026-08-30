@@ -363,11 +363,10 @@ stepwise withdrawal, partial withdrawal and its over-request and non-positive
 guards, cliff gating, cancellation splits, the `locked` and `progress` views
 across a stream's life, the cliff and no-cliff schedules documented above,
 authorization requirements, invalid input, past and
-boundary time-window rejection, backdated-start acceptance, multiple
-recipients funded by one sender, id-counter exhaustion at the `u64::MAX`
-boundary, rejection of the contract's own address in each participant role,
-self-streams, the documented precedence between validation groups, and
-double-withdraw and unknown-id guards.
+boundary time-window rejection, backdated-start acceptance, multiple token
+parallel streams, id-counter exhaustion at the `u64::MAX` boundary, rejection
+of the contract's own address in each participant role, self-streams, the
+documented precedence between validation groups, and double-withdraw and unknown-id guards.
 
 It also covers the storage and event behaviour described above: the order in
 which each entry point moves tokens and publishes its event, the Created,
