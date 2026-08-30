@@ -140,6 +140,12 @@ breaking change to the on-chain interface.
 
 ## Contract interface
 
+**All amounts are integer base units (stroops), not whole tokens.** When calling `create_stream` or `withdraw_amount`, the `total_amount` and `amount` parameters must be denominated in the token's smallest indivisible unit. For Stellar native assets (XLM) and most Stellar Asset Contract (SAC) tokens, that unit is the stroop: one ten-millionth of a whole token (1 token = 10,000,000 stroops). Passing `100` for a seven-decimal token like XLM streams 0.00001 XLM, not 100 XLM.
+
+**Concrete example:** To stream **50 XLM** from Alice to Bob over one month, the caller must pass `total_amount = 500_000_000` (fifty million stroops) to `create_stream`. Similarly, to withdraw **10 XLM** from a stream, the caller must pass `amount = 100_000_000` (one hundred million stroops) to `withdraw_amount`. The contract does not accept or return whole-token amounts; all arithmetic is performed in base units to avoid fractional token handling.
+
+**Why base units:** Soroban tokens use integer arithmetic. Stellar Asset Contract balances are stored as `i128` stroops, and the contract performs all vesting calculations (`vested = total_amount * elapsed / duration`) in that same unit. Using base units everywhere eliminates rounding errors and keeps the interface aligned with the underlying token contract's transfer and balance semantics.
+
 | Function                                                                                         | Caller    | Description                                                               |
 | ------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------- |
 | `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender    | Locks `total_amount` and opens a stream, returning its id.                |
@@ -319,7 +325,7 @@ This is O(n) over all streams and is only suitable for small deployments or one-
 ## Storage lifetime
 
 Soroban storage entries expire on a ledger clock and are archived once their
-time to live runs out. The contract keeps two kinds of entry alive on the same
+time to live (TTL) runs out. The contract keeps two kinds of entry alive on the same
 schedule:
 
 | Entry                  | Storage type | Holds                               |
@@ -352,11 +358,26 @@ written over the record still sitting under `Stream(0)`. Extending the instance
 on the same schedule as stream entries keeps the counter alive for as long as
 the streams it numbers.
 
-**Limitation:** a stream left completely untouched for longer than `ENTRY_TTL`
-is archived like any other Soroban entry. Recovering it requires a restore
-operation submitted off-contract; the contract itself offers no way to revive
-an archived stream. Callers holding long-dated streams should read them
-periodically — any view call is enough.
+### TTL and archival behavior
+
+**Time-to-live mechanics:** Every stream entry and the contract instance has a TTL counter that decrements by one with each closed ledger. When the TTL reaches zero, the entry is archived and removed from active storage. Archived entries are no longer accessible via contract calls and must be restored through an off-chain Soroban restore operation before they can be read or modified again.
+
+**Automatic extension:** The contract extends TTL automatically when an entry is accessed and its remaining TTL is below `BUMP_THRESHOLD` (103,680 ledgers, roughly six days). The extension resets the TTL back to the full `ENTRY_TTL` window (518,400 ledgers, roughly thirty days). If the remaining TTL is above the threshold, no extension occurs to avoid paying unnecessary storage fees on every access.
+
+**What triggers extension:**
+- Any call to `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, `status`, `withdraw`, `withdraw_amount`, or `cancel` for a stream id extends that stream's TTL if it is below the bump threshold.
+- `create_stream` extends the instance TTL, ensuring the id counter remains accessible.
+
+**Archival limitation:** A stream left completely untouched for longer than `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived. Once archived:
+- The stream cannot be accessed via contract calls. Attempts to call `get_stream`, `withdraw`, or any other function for that stream id return a host storage error, not a `StreamError::StreamNotFound`.
+- The contract itself offers no way to revive an archived stream. Recovery requires an off-chain Soroban restore transaction submitted directly to the network.
+- Tokens locked in an archived stream remain in the contract address until the entry is restored and the stream is interacted with again.
+
+**Concrete example:** Alice creates a six-month stream to Bob on January 1. Bob does not check or withdraw from the stream for the entire six months. On February 1 (roughly 518,400 ledgers later, assuming a five-second ledger close time), the stream entry's TTL reaches zero and is archived. On July 1, when the stream has fully vested, Bob attempts to call `withdraw`. The call fails because the stream entry is archived. Bob must submit a Soroban restore transaction to bring the entry back into active storage, after which `withdraw` will succeed and transfer the vested tokens.
+
+**How to avoid archival:** Callers holding long-dated streams should read them periodically — any view call is enough. A single `get_stream(id)` or `withdrawable(id)` call every few weeks (well within the 30-day window) keeps the stream alive indefinitely. Indexers that track streams by listening to `Created` events can implement automated TTL extension by periodically querying tracked stream ids.
+
+**Compatibility note:** The TTL values (`ENTRY_TTL = 518_400` and `BUMP_THRESHOLD = 103_680`) are defined in the contract source ([`contract.rs`](contracts/stream/src/contract.rs)) and form part of the operational behavior. Changing these values in a redeployed contract would alter the archival window, affecting how often streams must be accessed to stay alive. The archival mechanism itself is part of the Soroban platform and cannot be disabled at the contract level.
 
 ## Security model
 
