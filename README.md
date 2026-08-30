@@ -240,11 +240,61 @@ Verification and test implementations can be reviewed in [`test.rs`](contracts/s
 
 Code 2 is permanently retired and will never be assigned to a new variant.
 
+### Event schemas for indexers
+
 The contract publishes `Created`, `Withdrawn`, and `Cancelled` events, each
 carrying the parties as topics so an indexer can filter streams by sender or
 recipient. `Created` also carries the schedule, so a stream can be recorded
 without a follow-up `get_stream` call, and `withdraw` and `withdraw_amount`
 publish the same `Withdrawn` event.
+
+All event definitions are in [`events.rs`](contracts/stream/src/events.rs). Each event uses Soroban's `#[contractevent]` macro and marks certain fields with `#[topic]` to enable efficient indexer filtering by address.
+
+**Created**
+
+```rust
+pub struct Created {
+    #[topic] sender: Address,
+    #[topic] recipient: Address,
+    id: u64,
+    token: Address,
+    total_amount: i128,
+    start_time: u64,
+    end_time: u64,
+    cliff_time: u64,
+}
+```
+
+Published when `create_stream` succeeds. Both `sender` and `recipient` are indexed topics so an indexer can query all streams for a given address in either role. The schedule fields (`total_amount`, `start_time`, `end_time`, `cliff_time`) allow full stream reconstruction without a follow-up `get_stream` call.
+
+**Withdrawn**
+
+```rust
+pub struct Withdrawn {
+    #[topic] recipient: Address,
+    id: u64,
+    amount: i128,
+}
+```
+
+Published by both `withdraw` and `withdraw_amount` when tokens are transferred to the recipient. `recipient` is a topic for filtering withdrawal activity by address. The `amount` field is the actual number of base units transferred in this withdrawal event.
+
+**Cancelled**
+
+```rust
+pub struct Cancelled {
+    #[topic] sender: Address,
+    id: u64,
+    recipient_amount: i128,
+    sender_refund: i128,
+}
+```
+
+Published when `cancel` stops a stream. `sender` is a topic. Both sides of the split are included: `recipient_amount` is the vested portion that remains claimable by the recipient, and `sender_refund` is the unvested amount refunded to the sender.
+
+**Compatibility note:** event field names, types, and topic markers form part of the contract's public ABI. Any change is breaking for indexers and off-chain consumers that depend on the topic layout to filter streams by participant. See the documentation comment in [`events.rs`](contracts/stream/src/events.rs) for the full rationale.
+
+**Concrete example:** an indexer filtering for all streams where Alice is the recipient would subscribe to `Created` events with `recipient == Alice` and to `Withdrawn` events with `recipient == Alice`. The `Created` event carries the full schedule, so the indexer can reconstruct the stream record and track its vesting progress over time. When Alice withdraws, the `Withdrawn` event provides the exact amount transferred without requiring a follow-up query to the contract.
 
 ## Stream enumeration
 
