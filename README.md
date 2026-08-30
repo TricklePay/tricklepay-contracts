@@ -87,6 +87,18 @@ The two schedules agree everywhere from the cliff onward. A cliff does not
 change the rate or the total, it only withholds the earlier portion and then
 releases it in one step.
 
+### Boundary and edge-case notes
+
+A few common edge cases are worth keeping explicit:
+
+- An exact-end withdrawal is valid: once `now >= end_time`, the stream is fully
+  vested and `withdraw` can move the remaining balance out in one call.
+- A stream with `cliff_time == start_time` is a normal stream with no cliff; the
+  vesting logic simply reduces to the standard start-time gate.
+- Cancellation is never retroactive. The recipient keeps all vested funds up to
+  the cancellation instant, and the sender receives only the remaining unvested
+  balance.
+
 ### Integer rounding
 
 Vested amounts are computed as:
@@ -114,7 +126,7 @@ linear share — the rounding always favours the contract.
 | 1100 | 1000 | 1000.0 | 1000 |
 
 The schedule above divides evenly, so truncation has no visible effect. To see
-it, consider **10 units over `[0, 3]`** queried at `now == 1`:
+it, consider **10 units over 3 seconds`** queried at `now == 1`:
 `10 * 1 / 3 = 3` (not 4). This is explicitly tested in
 [`vesting.rs`](contracts/stream/src/vesting.rs) as `integer_division_rounds_down`.
 
