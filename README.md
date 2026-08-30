@@ -328,9 +328,9 @@ out-of-scope risks — are in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Building
 
-Rust 1.84 or newer with the `wasm32v1-none` target is required; the pinned
-versions are in `rust-toolchain.toml`. Note that `wasm32-unknown-unknown` does
-not work: on Rust 1.82+ it enables wasm features the Soroban environment does
+**Minimum Supported Rust Version (MSRV):** The MSRV is `1.84.0`. This recent toolchain is required because `soroban-sdk` targets `wasm32v1-none`. The pinned versions are in `rust-toolchain.toml`.
+
+Note that `wasm32-unknown-unknown` does not work: on Rust 1.82+ it enables wasm features the Soroban environment does
 not support, and soroban-sdk fails the build rather than produce a bad artifact.
 
 ```bash
