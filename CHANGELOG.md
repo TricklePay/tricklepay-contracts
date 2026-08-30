@@ -21,6 +21,11 @@ Nothing has been released yet and no version is tagged; `0.1.0` is still in
 development. All changes below are unreleased and recorded here so downstream
 consumers have a single document to track.
 
+### Changed
+
+- Clarified the README around cliff/no-cliff semantics, exact-end withdrawals,
+  and cancellation behaviour so stream boundaries are easier to reason about.
+
 ### Added
 
 - **ABI:** `create_stream(sender, recipient, token, total_amount, start_time,
