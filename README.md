@@ -352,6 +352,15 @@ cargo clippy --all-targets   # lints
 cargo audit --deny warnings   # uses .cargo/audit.toml ignores
 ```
 
+Before opening a pull request, run:
+
+```bash
+make check
+```
+
+This runs formatting, linting, and the test suite in the same order as CI, and
+fails fast on the first error.
+
 The audit ignores the unmaintained `derivative` and `paste` crates
 (`RUSTSEC-2024-0388` and `RUSTSEC-2024-0436`) and the yanked `spin` crate via
 `.cargo/audit.toml` because they are transitive Soroban test-host dependencies
