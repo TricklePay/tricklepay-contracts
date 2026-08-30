@@ -1,3 +1,17 @@
+//! Persistent storage keys and time-to-live management.
+//!
+//! This module owns the two storage entries the contract keeps: the instance
+//! entry `StreamCount`, which is the monotonic id counter, and the persistent
+//! `Stream(id)` entries, one per stream record. Both are granted `ENTRY_TTL`
+//! ledgers of lifetime and are extended back to that full window whenever they
+//! are touched with fewer than `BUMP_THRESHOLD` ledgers remaining, so an entry
+//! in frequent use does not pay to be re-extended on every access.
+//!
+//! Stream entries are bumped as a side effect of every read or write. The
+//! instance entry is bumped only by `create_stream` via [`extend_instance_ttl`];
+//! nothing extends it during a read, so a contract queried but never written
+//! to will run its instance down.
+
 use soroban_sdk::{contracttype, Env};
 
 use crate::types::Stream;
