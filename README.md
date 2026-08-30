@@ -14,6 +14,14 @@ web client that build on it live in separate repositories; see
 
 ## How a stream works
 
+**All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
+
+**Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
+- January 1, 2025 00:00:00 UTC = `1735689600` seconds since the Unix epoch (not `1735689600000` milliseconds).
+- February 1, 2025 00:00:00 UTC = `1738368000` seconds.
+
+Call `create_stream(sender, recipient, token, total_amount, 1735689600, 1738368000, 1735689600)` where `cliff_time == start_time` represents the no-cliff case. The ledger clock increments in seconds, so vesting progresses one second at a time from `start_time` toward `end_time`.
+
 A stream is defined by a total amount and a window of time:
 
 - **Start and end** bound the linear release. At the start nothing has vested;
@@ -42,8 +50,9 @@ A stream is defined by a total amount and a window of time:
   window closes — a pure lockup that vests in one step.
 
   A no-cliff stream is what `create_stream(sender, recipient, token, 1000, 100,
-  1100, 100)` opens, and it is the shape most of the contract tests use. Its
+1100, 100)` opens, and it is the shape most of the contract tests use. Its
   schedule is tabulated under [Example schedule](#example-schedule) below.
+
 - **Withdraw** sends the recipient whatever has vested minus what they have
   already taken. A partial withdrawal (`withdraw_amount`) names a figure
   instead and transfers exactly that, up to the same balance; whatever is left
@@ -56,9 +65,10 @@ A stream is defined by a total amount and a window of time:
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
-rendering a progress bar. Cancelling freezes the total at whatever had vested,
-so a cancelled stream reports nothing locked and full progress even when it was
-stopped early.
+rendering a progress bar (for example, a value of 5000 means 50%). Cancelling
+freezes the total at whatever had vested, so a cancelled stream reports nothing
+locked and full progress (10000) even when it was stopped early. A stream with
+a `total_amount` of zero also reports full progress (10000) at all times.
 
 All amounts are in the token's smallest unit. All times are Unix timestamps in
 seconds, matching the ledger clock.
@@ -71,27 +81,39 @@ Both examples stream **1000 units from `start_time = 100` to `end_time = 1100`**
 
 Without a cliff, `cliff_time == start_time == 100` (no cliff):
 
-| Time | Vested | Locked | Description |
-| --- | --- | --- | --- |
-| 50 | 0 | 1000 | before the start, nothing has vested; entire amount is locked |
-| 350 | 250 | 750 | a quarter of the window has elapsed |
-| 600 | 500 | 500 | the midpoint |
-| 850 | 750 | 250 | three quarters |
-| 1100 | 1000 | 0 | the end: fully vested; zero locked |
-| 9999 | 1000 | 0 | past the end, still capped at the total |
+| Time | Vested | Locked | Description                                                   |
+| ---- | ------ | ------ | ------------------------------------------------------------- |
+| 50   | 0      | 1000   | before the start, nothing has vested; entire amount is locked |
+| 350  | 250    | 750    | a quarter of the window has elapsed                           |
+| 600  | 500    | 500    | the midpoint                                                  |
+| 850  | 750    | 250    | three quarters                                                |
+| 1100 | 1000   | 0      | the end: fully vested; zero locked                            |
+| 9999 | 1000   | 0      | past the end, still capped at the total                       |
 
 With a cliff at the midpoint, `cliff_time == 600`:
 
-| Time | Vested | Locked | Description |
-| --- | --- | --- | --- |
-| 300 | 0 | 1000 | past the start, but the cliff has not been reached; all 1000 remains locked |
-| 600 | 500 | 500 | the cliff releases everything accrued since the start, unlocking 500 |
-| 850 | 750 | 250 | vesting continues linearly from the cliff onward |
-| 1100 | 1000 | 0 | the end: fully vested |
+| Time | Vested | Locked | Description                                                                 |
+| ---- | ------ | ------ | --------------------------------------------------------------------------- |
+| 300  | 0      | 1000   | past the start, but the cliff has not been reached; all 1000 remains locked |
+| 600  | 500    | 500    | the cliff releases everything accrued since the start, unlocking 500        |
+| 850  | 750    | 250    | vesting continues linearly from the cliff onward                            |
+| 1100 | 1000   | 0      | the end: fully vested                                                       |
 
 The two schedules agree everywhere from the cliff onward. A cliff does not
 change the rate or the total, it only withholds the earlier portion and then
 releases it in one step.
+
+### Boundary and edge-case notes
+
+A few common edge cases are worth keeping explicit:
+
+- An exact-end withdrawal is valid: once `now >= end_time`, the stream is fully
+  vested and `withdraw` can move the remaining balance out in one call.
+- A stream with `cliff_time == start_time` is a normal stream with no cliff; the
+  vesting logic simply reduces to the standard start-time gate.
+- Cancellation is never retroactive. The recipient keeps all vested funds up to
+  the cancellation instant, and the sender receives only the remaining unvested
+  balance.
 
 ### Integer rounding
 
@@ -113,14 +135,14 @@ linear share — the rounding always favours the contract.
 `cliff_time == start_time == 100` (no cliff):
 
 | Time | `elapsed` | Exact share | Vested (truncated) |
-| --- | --- | --- | --- |
-| 350 | 250 | 250.0 | 250 |
-| 600 | 500 | 500.0 | 500 |
-| 850 | 750 | 750.0 | 750 |
-| 1100 | 1000 | 1000.0 | 1000 |
+| ---- | --------- | ----------- | ------------------ |
+| 350  | 250       | 250.0       | 250                |
+| 600  | 500       | 500.0       | 500                |
+| 850  | 750       | 750.0       | 750                |
+| 1100 | 1000      | 1000.0      | 1000               |
 
 The schedule above divides evenly, so truncation has no visible effect. To see
-it, consider **10 units over `[0, 3]`** queried at `now == 1`:
+it, consider **10 units over 3 seconds`** queried at `now == 1`:
 `10 * 1 / 3 = 3` (not 4). This is explicitly tested in
 [`vesting.rs`](contracts/stream/src/vesting.rs) as `integer_division_rounds_down`.
 
@@ -138,19 +160,25 @@ breaking change to the on-chain interface.
 
 ## Contract interface
 
-| Function | Caller | Description |
-| --- | --- | --- |
-| `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender | Locks `total_amount` and opens a stream, returning its id. |
-| `withdraw(id) -> i128` | recipient | Transfers the vested, unwithdrawn balance to the recipient. |
-| `withdraw_amount(id, amount) -> i128` | recipient | Transfers exactly `amount`; fails if it exceeds the withdrawable balance. |
-| `cancel(id) -> i128` | sender | Refunds the unvested remainder to the sender and freezes the stream. |
-| `get_stream(id) -> Stream` | anyone | Returns the full stream record. |
-| `withdrawable(id) -> i128` | anyone | Amount the recipient can withdraw right now. |
-| `vested(id) -> i128` | anyone | Total vested so far, including what was withdrawn. |
-| `locked(id) -> i128` | anyone | Amount still unvested; zero once the stream completes or is cancelled. |
-| `progress(id) -> u32` | anyone | Vesting progress in basis points, from `0` to `10000`. |
-| `status(id) -> StreamStatus` | anyone | `Pending`, `Streaming`, `Completed`, or `Cancelled`. |
-| `stream_count() -> u64` | anyone | Number of streams created; ids run from 0 upward. |
+**All amounts are integer base units (stroops), not whole tokens.** When calling `create_stream` or `withdraw_amount`, the `total_amount` and `amount` parameters must be denominated in the token's smallest indivisible unit. For Stellar native assets (XLM) and most Stellar Asset Contract (SAC) tokens, that unit is the stroop: one ten-millionth of a whole token (1 token = 10,000,000 stroops). Passing `100` for a seven-decimal token like XLM streams 0.00001 XLM, not 100 XLM.
+
+**Concrete example:** To stream **50 XLM** from Alice to Bob over one month, the caller must pass `total_amount = 500_000_000` (fifty million stroops) to `create_stream`. Similarly, to withdraw **10 XLM** from a stream, the caller must pass `amount = 100_000_000` (one hundred million stroops) to `withdraw_amount`. The contract does not accept or return whole-token amounts; all arithmetic is performed in base units to avoid fractional token handling.
+
+**Why base units:** Soroban tokens use integer arithmetic. Stellar Asset Contract balances are stored as `i128` stroops, and the contract performs all vesting calculations (`vested = total_amount * elapsed / duration`) in that same unit. Using base units everywhere eliminates rounding errors and keeps the interface aligned with the underlying token contract's transfer and balance semantics.
+
+| Function                                                                                         | Caller    | Description                                                               |
+| ------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------- |
+| `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender    | Locks `total_amount` and opens a stream, returning its id.                |
+| `withdraw(id) -> i128`                                                                           | recipient | Transfers the vested, unwithdrawn balance to the recipient.               |
+| `withdraw_amount(id, amount) -> i128`                                                            | recipient | Transfers exactly `amount`; fails if it exceeds the withdrawable balance. |
+| `cancel(id) -> i128`                                                                             | sender    | Refunds the unvested remainder to the sender and freezes the stream.      |
+| `get_stream(id) -> Stream`                                                                       | anyone    | Returns the full stream record.                                           |
+| `withdrawable(id) -> i128`                                                                       | anyone    | Amount the recipient can withdraw right now.                              |
+| `vested(id) -> i128`                                                                             | anyone    | Total vested so far, including what was withdrawn.                        |
+| `locked(id) -> i128`                                                                             | anyone    | Amount still unvested; zero once the stream completes or is cancelled.    |
+| `progress(id) -> u32`                                                                            | anyone    | Vesting progress in basis points, from `0` to `10000`.                    |
+| `status(id) -> StreamStatus`                                                                     | anyone    | `Pending`, `Streaming`, `Completed`, or `Cancelled`.                      |
+| `stream_count() -> u64`                                                                          | anyone    | Number of streams created; ids run from 0 upward.                         |
 
 #### Required authorization signatures
 
@@ -184,13 +212,13 @@ no stream record, and no consumed id behind. When an argument list breaks more
 than one rule, the first group below decides the error, so integrators get the
 same answer every time rather than one that depends on check ordering:
 
-| | Group | Errors, in order |
-| --- | --- | --- |
-| 1 | Authorization | `sender` must authorize the call |
-| 2 | Participants | `InvalidParticipant` |
-| 3 | Amount | `InvalidAmount`, then `AmountTooLarge` |
-| 4 | Schedule | `InvalidTimeRange`, then `InvalidCliff`, then `StreamWindowInPast` |
-| 5 | Capacity | `StreamCountExhausted` |
+|     | Group         | Errors, in order                                                   |
+| --- | ------------- | ------------------------------------------------------------------ |
+| 1   | Authorization | `sender` must authorize the call                                   |
+| 2   | Participants  | `InvalidParticipant`                                               |
+| 3   | Amount        | `InvalidAmount`, then `AmountTooLarge`                             |
+| 4   | Schedule      | `InvalidTimeRange`, then `InvalidCliff`, then `StreamWindowInPast` |
+| 5   | Capacity      | `StreamCountExhausted`                                             |
 
 Two participant rules are enforced in group 2. `sender` and `recipient` must
 differ, and the token address must also be distinct from both of them. A stream
@@ -221,28 +249,78 @@ Verification and test implementations can be reviewed in [`test.rs`](contracts/s
 
 ### Error codes
 
-| Code | Variant | When returned |
-| --- | --- | --- |
-| 1 | `StreamNotFound` | No stream exists for the given id. |
-| 3 | `InvalidTimeRange` | `start_time` is not strictly before `end_time`. |
-| 4 | `InvalidAmount` | `total_amount` is zero or negative, or the withdrawal amount is non-positive. |
-| 5 | `InvalidCliff` | `cliff_time` falls outside `[start_time, end_time]`. |
-| 6 | `AlreadyCancelled` | Attempting to cancel a stream that was already cancelled. |
-| 7 | `NothingToWithdraw` | No vested balance is available to withdraw right now. |
-| 8 | `InsufficientBalance` | Requested withdrawal exceeds the available vested balance. |
-| 9 | `StreamAlreadyCompleted` | Attempting to cancel a stream that has fully vested (`now >= end_time`). |
-| 10 | `AmountTooLarge` | `total_amount` exceeds `i64::MAX`, the overflow-safety cap. |
-| 11 | `StreamWindowInPast` | `end_time` is at or before the current ledger timestamp. The stream would be 100 % vested on creation; use a direct token transfer instead. |
-| 12 | `StreamCountExhausted` | The id counter has reached `u64::MAX`. No further stream can be created; ids are never reused. |
-| 13 | `InvalidParticipant` | `sender` equals `recipient`, or `sender`/`recipient`/`token` is the stream contract's own address. |
+| Code | Variant                  | When returned                                                                                                                               |
+| ---- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `StreamNotFound`         | No stream exists for the given id.                                                                                                          |
+| 3    | `InvalidTimeRange`       | `start_time` is not strictly before `end_time`.                                                                                             |
+| 4    | `InvalidAmount`          | `total_amount` is zero or negative, or the withdrawal amount is non-positive.                                                               |
+| 5    | `InvalidCliff`           | `cliff_time` falls outside `[start_time, end_time]`.                                                                                        |
+| 6    | `AlreadyCancelled`       | Attempting to cancel a stream that was already cancelled.                                                                                   |
+| 7    | `NothingToWithdraw`      | No vested balance is available to withdraw right now.                                                                                       |
+| 8    | `InsufficientBalance`    | Requested withdrawal exceeds the available vested balance.                                                                                  |
+| 9    | `StreamAlreadyCompleted` | Attempting to cancel a stream that has fully vested (`now >= end_time`).                                                                    |
+| 10   | `AmountTooLarge`         | `total_amount` exceeds `i64::MAX`, the overflow-safety cap.                                                                                 |
+| 11   | `StreamWindowInPast`     | `end_time` is at or before the current ledger timestamp. The stream would be 100 % vested on creation; use a direct token transfer instead. |
+| 12   | `StreamCountExhausted`   | The id counter has reached `u64::MAX`. No further stream can be created; ids are never reused.                                              |
+| 13   | `InvalidParticipant`     | `sender` equals `recipient`, or `sender`/`recipient`/`token` is the stream contract's own address.                                          |
 
 Code 2 is permanently retired and will never be assigned to a new variant.
+
+### Event schemas for indexers
 
 The contract publishes `Created`, `Withdrawn`, and `Cancelled` events, each
 carrying the parties as topics so an indexer can filter streams by sender or
 recipient. `Created` also carries the schedule, so a stream can be recorded
 without a follow-up `get_stream` call, and `withdraw` and `withdraw_amount`
 publish the same `Withdrawn` event.
+
+All event definitions are in [`events.rs`](contracts/stream/src/events.rs). Each event uses Soroban's `#[contractevent]` macro and marks certain fields with `#[topic]` to enable efficient indexer filtering by address.
+
+**Created**
+
+```rust
+pub struct Created {
+    #[topic] sender: Address,
+    #[topic] recipient: Address,
+    id: u64,
+    token: Address,
+    total_amount: i128,
+    start_time: u64,
+    end_time: u64,
+    cliff_time: u64,
+}
+```
+
+Published when `create_stream` succeeds. Both `sender` and `recipient` are indexed topics so an indexer can query all streams for a given address in either role. The schedule fields (`total_amount`, `start_time`, `end_time`, `cliff_time`) allow full stream reconstruction without a follow-up `get_stream` call.
+
+**Withdrawn**
+
+```rust
+pub struct Withdrawn {
+    #[topic] recipient: Address,
+    id: u64,
+    amount: i128,
+}
+```
+
+Published by both `withdraw` and `withdraw_amount` when tokens are transferred to the recipient. `recipient` is a topic for filtering withdrawal activity by address. The `amount` field is the actual number of base units transferred in this withdrawal event.
+
+**Cancelled**
+
+```rust
+pub struct Cancelled {
+    #[topic] sender: Address,
+    id: u64,
+    recipient_amount: i128,
+    sender_refund: i128,
+}
+```
+
+Published when `cancel` stops a stream. `sender` is a topic. Both sides of the split are included: `recipient_amount` is the vested portion that remains claimable by the recipient, and `sender_refund` is the unvested amount refunded to the sender.
+
+**Compatibility note:** event field names, types, and topic markers form part of the contract's public ABI. Any change is breaking for indexers and off-chain consumers that depend on the topic layout to filter streams by participant. See the documentation comment in [`events.rs`](contracts/stream/src/events.rs) for the full rationale.
+
+**Concrete example:** an indexer filtering for all streams where Alice is the recipient would subscribe to `Created` events with `recipient == Alice` and to `Withdrawn` events with `recipient == Alice`. The `Created` event carries the full schedule, so the indexer can reconstruct the stream record and track its vesting progress over time. When Alice withdraws, the `Withdrawn` event provides the exact amount transferred without requiring a follow-up query to the contract.
 
 ## Stream enumeration
 
@@ -258,6 +336,7 @@ Streams are keyed by numeric id only. The contract does not maintain per-sender 
 Use the `Created` event. Each `Created` event is published with `sender` and `recipient` as indexed topics, so any indexer (Horizon, RPC, or the tricklepay-backend) can filter events by topic to reconstruct the full set of stream ids for any address without a follow-up `get_stream` call. The event also carries the full schedule, so streams can be recorded on first observation.
 
 For a contract-only consumer with no event access:
+
 1. Call `stream_count()` to get the total number of streams.
 2. Call `get_stream(id)` for each id from `0` to `stream_count() - 1` and filter by `sender` or `recipient`.
 
@@ -266,13 +345,13 @@ This is O(n) over all streams and is only suitable for small deployments or one-
 ## Storage lifetime
 
 Soroban storage entries expire on a ledger clock and are archived once their
-time to live runs out. The contract keeps two kinds of entry alive on the same
+time to live (TTL) runs out. The contract keeps two kinds of entry alive on the same
 schedule:
 
-| Entry | Storage type | Holds |
-| --- | --- | --- |
-| `DataKey::Stream(id)` | persistent | one stream record |
-| `DataKey::StreamCount` | instance | the id to assign to the next stream |
+| Entry                  | Storage type | Holds                               |
+| ---------------------- | ------------ | ----------------------------------- |
+| `DataKey::Stream(id)`  | persistent   | one stream record                   |
+| `DataKey::StreamCount` | instance     | the id to assign to the next stream |
 
 Both are granted `ENTRY_TTL` — 518,400 ledgers, roughly thirty days at the
 standard five second close time — and both are extended back to that full
@@ -299,11 +378,26 @@ written over the record still sitting under `Stream(0)`. Extending the instance
 on the same schedule as stream entries keeps the counter alive for as long as
 the streams it numbers.
 
-**Limitation:** a stream left completely untouched for longer than `ENTRY_TTL`
-is archived like any other Soroban entry. Recovering it requires a restore
-operation submitted off-contract; the contract itself offers no way to revive
-an archived stream. Callers holding long-dated streams should read them
-periodically — any view call is enough.
+### TTL and archival behavior
+
+**Time-to-live mechanics:** Every stream entry and the contract instance has a TTL counter that decrements by one with each closed ledger. When the TTL reaches zero, the entry is archived and removed from active storage. Archived entries are no longer accessible via contract calls and must be restored through an off-chain Soroban restore operation before they can be read or modified again.
+
+**Automatic extension:** The contract extends TTL automatically when an entry is accessed and its remaining TTL is below `BUMP_THRESHOLD` (103,680 ledgers, roughly six days). The extension resets the TTL back to the full `ENTRY_TTL` window (518,400 ledgers, roughly thirty days). If the remaining TTL is above the threshold, no extension occurs to avoid paying unnecessary storage fees on every access.
+
+**What triggers extension:**
+- Any call to `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, `status`, `withdraw`, `withdraw_amount`, or `cancel` for a stream id extends that stream's TTL if it is below the bump threshold.
+- `create_stream` extends the instance TTL, ensuring the id counter remains accessible.
+
+**Archival limitation:** A stream left completely untouched for longer than `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived. Once archived:
+- The stream cannot be accessed via contract calls. Attempts to call `get_stream`, `withdraw`, or any other function for that stream id return a host storage error, not a `StreamError::StreamNotFound`.
+- The contract itself offers no way to revive an archived stream. Recovery requires an off-chain Soroban restore transaction submitted directly to the network.
+- Tokens locked in an archived stream remain in the contract address until the entry is restored and the stream is interacted with again.
+
+**Concrete example:** Alice creates a six-month stream to Bob on January 1. Bob does not check or withdraw from the stream for the entire six months. On February 1 (roughly 518,400 ledgers later, assuming a five-second ledger close time), the stream entry's TTL reaches zero and is archived. On July 1, when the stream has fully vested, Bob attempts to call `withdraw`. The call fails because the stream entry is archived. Bob must submit a Soroban restore transaction to bring the entry back into active storage, after which `withdraw` will succeed and transfer the vested tokens.
+
+**How to avoid archival:** Callers holding long-dated streams should read them periodically — any view call is enough. A single `get_stream(id)` or `withdrawable(id)` call every few weeks (well within the 30-day window) keeps the stream alive indefinitely. Indexers that track streams by listening to `Created` events can implement automated TTL extension by periodically querying tracked stream ids.
+
+**Compatibility note:** The TTL values (`ENTRY_TTL = 518_400` and `BUMP_THRESHOLD = 103_680`) are defined in the contract source ([`contract.rs`](contracts/stream/src/contract.rs)) and form part of the operational behavior. Changing these values in a redeployed contract would alter the archival window, affecting how often streams must be accessed to stay alive. The archival mechanism itself is part of the Soroban platform and cannot be disabled at the contract level.
 
 ## Security model
 
@@ -327,9 +421,9 @@ out-of-scope risks — are in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Building
 
-Rust 1.84 or newer with the `wasm32v1-none` target is required; the pinned
-versions are in `rust-toolchain.toml`. Note that `wasm32-unknown-unknown` does
-not work: on Rust 1.82+ it enables wasm features the Soroban environment does
+**Minimum Supported Rust Version (MSRV):** The MSRV is `1.84.0`. This recent toolchain is required because `soroban-sdk` targets `wasm32v1-none`. The pinned versions are in `rust-toolchain.toml`.
+
+Note that `wasm32-unknown-unknown` does not work: on Rust 1.82+ it enables wasm features the Soroban environment does
 not support, and soroban-sdk fails the build rather than produce a bad artifact.
 
 ```bash
@@ -342,6 +436,24 @@ cargo build --release --target wasm32v1-none
 
 The release artifact is written to
 `target/wasm32v1-none/release/tricklepay_stream.wasm`.
+
+### Release profile
+
+Contract size affects deployment cost, since Soroban charges to store and load
+bytecode. The `[profile.release]` settings in the root `Cargo.toml` are tuned
+to minimize the size of that artifact, sometimes at the cost of build time or
+raw runtime speed:
+
+| Setting            | Value       | Effect                                                                                                                                                                                                           |
+| ------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opt-level`        | `"z"`       | Optimizes for the smallest possible binary size, ahead of runtime speed.                                                                                                                                         |
+| `lto`              | `true`      | Enables link-time optimization across the whole dependency graph, so the compiler can inline and eliminate dead code across crate boundaries — smaller (and often faster) output, at the cost of a slower build. |
+| `codegen-units`    | `1`         | Compiles as a single codegen unit instead of splitting work in parallel, which allows more aggressive cross-function optimization at the cost of slower, non-parallel compilation.                               |
+| `strip`            | `"symbols"` | Strips debug symbols and other metadata from the compiled artifact, shrinking it with no effect on behavior.                                                                                                     |
+| `debug`            | `0`         | Omits debug info from the build; it isn't used in a deployed WASM artifact and only adds size.                                                                                                                   |
+| `debug-assertions` | `false`     | Disables `debug_assert!` checks in the compiled output, trimming both size and runtime overhead.                                                                                                                 |
+| `overflow-checks`  | `true`      | Kept enabled even in release mode, unlike the Rust default — a deliberate trade of a small amount of size and speed for safety, since a silent overflow in a token amount would be a serious bug.                |
+| `panic`            | `"abort"`   | Aborts on panic instead of unwinding, removing the unwinding machinery from the binary for a smaller artifact.                                                                                                   |
 
 ## Testing
 
@@ -372,16 +484,15 @@ stepwise withdrawal, partial withdrawal and its over-request and non-positive
 guards, cliff gating, cancellation splits, the `locked` and `progress` views
 across a stream's life, the cliff and no-cliff schedules documented above,
 authorization requirements, invalid input, past and
-boundary time-window rejection, backdated-start acceptance, multiple
-recipients funded by one sender, id-counter exhaustion at the `u64::MAX`
-boundary, rejection of the contract's own address in each participant role,
-self-streams, the documented precedence between validation groups, and
-double-withdraw and unknown-id guards.
+boundary time-window rejection, backdated-start acceptance, multiple token
+parallel streams, id-counter exhaustion at the `u64::MAX` boundary, rejection
+of the contract's own address in each participant role, self-streams, the
+documented precedence between validation groups, and double-withdraw and unknown-id guards.
 
 It also covers the storage and event behaviour described above: the order in
-which each entry point moves tokens and publishes its event, the Created,
-Withdrawn, and Cancelled payload fields, the silence of a rejected call on
-the event stream, `DataKey` encoding across the id range, and
+which each entry point moves tokens and publishes its event, the indexed
+event topics, the silence of a rejected call on the event stream, `DataKey`
+encoding across the id range, and
 the persistent-entry and instance time-to-live bumps on both sides of
 `BUMP_THRESHOLD`.
 
@@ -393,6 +504,50 @@ contract. It expects a funded identity configured with `stellar keys`.
 ```bash
 ./scripts/deploy.sh <identity-name>
 ```
+
+## Troubleshooting
+
+### Wrong build target
+If you see an error when building that mentions unsupported WebAssembly features or the wrong target:
+```text
+error: compiling for `wasm32-unknown-unknown` is not supported
+```
+**Fix:** Soroban SDK requires the newer target on recent Rust versions. Always build with `--target wasm32v1-none` instead of `wasm32-unknown-unknown`.
+
+### Missing toolchain component
+If you see an error indicating that the standard library cannot be found:
+```text
+error[E0463]: can't find crate for `core`
+  = note: the `wasm32v1-none` target may not be installed
+```
+**Fix:** Add the required WebAssembly target to your Rust toolchain by running:
+`rustup target add wasm32v1-none`
+
+### Unfunded identity
+When running the deployment script, if you encounter an error like:
+```text
+error: account not found
+```
+or a transaction failure due to insufficient XLM on testnet.
+**Fix:** Make sure the identity you are using is funded by running:
+`stellar keys fund <identity-name> --network testnet`
+
+## Frequently asked questions
+
+**1. Why are funds locked up front?**
+To guarantee that the recipient will actually receive the streamed tokens, the entire `total_amount` is pulled into the contract immediately upon creation. This prevents the sender from spending the funds elsewhere before they vest. See [THREAT_MODEL.md](THREAT_MODEL.md) for details on the security implications of this lock-up.
+
+**2. What happens if the project's servers disappear?**
+The stream lives entirely on the Stellar ledger as a smart contract. You can interact with it using any Stellar Horizon or RPC node, even if our frontend or indexer goes down. The security model ensures that you do not depend on any off-chain infrastructure. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**3. Can I pause or freeze a stream?**
+No. There is no pause, freeze, or emergency-stop function. The only escape hatch is the sender's `cancel` function, which stops the stream and refunds only the unvested portion. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**4. Are there any admin keys that can steal or lock my funds?**
+No, there is no admin or owner account. The deployed bytecode is immutable, meaning no privileged key can upgrade the contract, halt streams, or confiscate tokens. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**5. How do I enumerate my streams?**
+On-chain enumeration is not supported to save on storage and gas costs. You should use the `Created` event to index streams off-chain. See the Stream enumeration section above for more details.
 
 ## Project structure
 

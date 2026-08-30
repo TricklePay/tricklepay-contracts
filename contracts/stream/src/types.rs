@@ -40,12 +40,19 @@ pub struct Stream {
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamStatus {
-    /// Created but the start time has not yet been reached.
+    /// The current ledger time is before `start_time`; nothing has vested
+    /// yet.
     Pending,
-    /// Actively vesting between start and end time.
+    /// The current ledger time is at or after `start_time` and before
+    /// `end_time`; tokens are actively vesting.
     Streaming,
-    /// Fully vested; the end time has passed.
+    /// The current ledger time is at or after `end_time`; the stream is
+    /// fully vested.
     Completed,
-    /// Cancelled by the sender before completion.
+    /// The sender cancelled the stream. Cancellation can only happen while
+    /// a stream is `Pending` or `Streaming` (a `Completed` stream can no
+    /// longer be cancelled), but once cancelled the stream reports
+    /// `Cancelled` permanently, overriding what the time-based state would
+    /// otherwise be.
     Cancelled,
 }

@@ -30,8 +30,25 @@ pub(crate) const BUMP_THRESHOLD: u32 = 103_680;
 #[derive(Clone)]
 pub enum DataKey {
     /// Monotonic counter holding the id to assign to the next stream.
+    ///
+    /// Stored in **instance** storage. It is initialised to `0` on the first
+    /// `create_stream` call and incremented by one each time a new stream is
+    /// opened. Ids are never reused: once a value has been assigned it stays
+    /// consumed even if the corresponding stream is cancelled or fully vested.
+    ///
+    /// Because instance storage is not bumped by read-only calls, this entry
+    /// is extended explicitly by [`extend_instance_ttl`] inside `create_stream`
+    /// to keep it alive for as long as the streams it numbers.
     StreamCount,
-    /// A stream record, keyed by its id.
+    /// A single stream record, keyed by its numeric id.
+    ///
+    /// Stored in **persistent** storage. Each entry holds the full [`Stream`]
+    /// struct — participants, token, schedule, withdrawn amount, and cancelled
+    /// flag — for one stream. The entry is extended to [`ENTRY_TTL`] ledgers
+    /// whenever it is read or written, so any view or mutating call on a stream
+    /// resets its countdown. A stream that is never touched for longer than
+    /// [`ENTRY_TTL`] ledgers will be archived by the network and must be
+    /// restored off-contract before it can be used again.
     Stream(u64),
 }
 
