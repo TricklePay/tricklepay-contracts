@@ -233,6 +233,65 @@ fn create_stream_locks_funds_and_assigns_id() {
 }
 
 #[test]
+fn one_sender_can_stream_multiple_tokens_in_parallel() {
+    let t = StreamTest::setup(1_000);
+    let second_issuer = Address::generate(&t.env);
+    let second_sac = t.env.register_stellar_asset_contract_v2(second_issuer);
+    let second_token_address = second_sac.address();
+    let second_token = token::TokenClient::new(&t.env, &second_token_address);
+    let second_token_admin = token::StellarAssetClient::new(&t.env, &second_token_address);
+    second_token_admin.mint(&t.sender, &2_000);
+    t.set_time(100);
+
+    let first_id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &400,
+        &100,
+        &1_100,
+        &100,
+    );
+    let second_id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &second_token_address,
+        &900,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    assert_eq!(first_id, 0);
+    assert_eq!(second_id, 1);
+    assert_eq!(t.contract.stream_count(), 2);
+    assert_eq!(t.token.balance(&t.sender), 600);
+    assert_eq!(second_token.balance(&t.sender), 1_100);
+    assert_eq!(t.token.balance(&t.contract.address), 400);
+    assert_eq!(second_token.balance(&t.contract.address), 900);
+
+    let first = t.contract.get_stream(&first_id);
+    assert_eq!(first.token, t.token_address);
+    assert_eq!(first.total_amount, 400);
+    assert_eq!(first.withdrawn, 0);
+
+    let second = t.contract.get_stream(&second_id);
+    assert_eq!(second.token, second_token_address);
+    assert_eq!(second.total_amount, 900);
+    assert_eq!(second.withdrawn, 0);
+
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw(&first_id), 200);
+    assert_eq!(t.contract.withdraw(&second_id), 450);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+    assert_eq!(second_token.balance(&t.recipient), 450);
+    assert_eq!(t.token.balance(&t.contract.address), 200);
+    assert_eq!(second_token.balance(&t.contract.address), 450);
+    assert_eq!(t.contract.get_stream(&first_id).withdrawn, 200);
+    assert_eq!(t.contract.get_stream(&second_id).withdrawn, 450);
+}
+
+#[test]
 fn withdraw_releases_vested_in_steps() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
