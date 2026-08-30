@@ -24,7 +24,7 @@ consumers have a single document to track.
 ### Added
 
 - **ABI:** `create_stream(sender, recipient, token, total_amount, start_time,
-  end_time, cliff_time) → u64` — opens a new stream, pulls the full
+end_time, cliff_time) → u64` — opens a new stream, pulls the full
   `total_amount` from the sender into the contract, and returns the assigned
   stream id. Added 2026-06-17.
 
@@ -76,6 +76,14 @@ consumers have a single document to track.
   were recording only the first three data fields must update their decoders to
   handle the additional fields. Changed 2026-07-11.
 
+- The `[profile.release]` build profile is tuned for WASM artifact size:
+  `opt-level = "z"`, `lto = true`, `codegen-units = 1`, and `panic = "abort"`
+  reduce the compiled size, while `strip = "symbols"` and `debug = 0` drop
+  metadata not needed in a deployed artifact. `overflow-checks` stays `true`
+  even in release, trading a small amount of size for safety against silent
+  arithmetic overflow in token amounts. This is a build-tooling change with no
+  effect on contract behaviour or the ABI.
+
 ### Added
 
 - **ABI:** `StreamError::StreamCountExhausted`, error code `12`. Stream ids come
@@ -94,7 +102,6 @@ consumers have a single document to track.
   now rejects this contract's own address as `sender`, `recipient`, or `token`,
   checked before any tokens move. Each role previously failed in its own
   unhelpful way:
-
   - As `recipient` the call **succeeded**, locking the tokens permanently.
     `withdraw` requires the recipient's authorization and the contract cannot
     sign for itself, so nothing could ever claim them.
@@ -164,16 +171,16 @@ consumers have a single document to track.
 
 ### Error code reference
 
-| Code | Variant               | Status   |
-|------|-----------------------|----------|
-| 1    | `StreamNotFound`      | Active   |
-| 2    | *(retired)*           | Retired  |
-| 3    | `InvalidTimeRange`    | Active   |
-| 4    | `InvalidAmount`       | Active   |
-| 5    | `InvalidCliff`        | Active   |
-| 6    | `AlreadyCancelled`    | Active   |
-| 7    | `NothingToWithdraw`   | Active   |
-| 8    | `InsufficientBalance` | Active   |
-| 9    | `StreamAlreadyCompleted` | Active |
-| 10   | `AmountTooLarge`      | Active   |
-| 11   | `StreamWindowInPast`  | Active   |
+| Code | Variant                  | Status  |
+| ---- | ------------------------ | ------- |
+| 1    | `StreamNotFound`         | Active  |
+| 2    | _(retired)_              | Retired |
+| 3    | `InvalidTimeRange`       | Active  |
+| 4    | `InvalidAmount`          | Active  |
+| 5    | `InvalidCliff`           | Active  |
+| 6    | `AlreadyCancelled`       | Active  |
+| 7    | `NothingToWithdraw`      | Active  |
+| 8    | `InsufficientBalance`    | Active  |
+| 9    | `StreamAlreadyCompleted` | Active  |
+| 10   | `AmountTooLarge`         | Active  |
+| 11   | `StreamWindowInPast`     | Active  |
