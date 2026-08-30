@@ -411,6 +411,23 @@ or a transaction failure due to insufficient XLM on testnet.
 **Fix:** Make sure the identity you are using is funded by running:
 `stellar keys fund <identity-name> --network testnet`
 
+## Frequently asked questions
+
+**1. Why are funds locked up front?**
+To guarantee that the recipient will actually receive the streamed tokens, the entire `total_amount` is pulled into the contract immediately upon creation. This prevents the sender from spending the funds elsewhere before they vest. See [THREAT_MODEL.md](THREAT_MODEL.md) for details on the security implications of this lock-up.
+
+**2. What happens if the project's servers disappear?**
+The stream lives entirely on the Stellar ledger as a smart contract. You can interact with it using any Stellar Horizon or RPC node, even if our frontend or indexer goes down. The security model ensures that you do not depend on any off-chain infrastructure. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**3. Can I pause or freeze a stream?**
+No. There is no pause, freeze, or emergency-stop function. The only escape hatch is the sender's `cancel` function, which stops the stream and refunds only the unvested portion. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**4. Are there any admin keys that can steal or lock my funds?**
+No, there is no admin or owner account. The deployed bytecode is immutable, meaning no privileged key can upgrade the contract, halt streams, or confiscate tokens. See [THREAT_MODEL.md](THREAT_MODEL.md).
+
+**5. How do I enumerate my streams?**
+On-chain enumeration is not supported to save on storage and gas costs. You should use the `Created` event to index streams off-chain. See the Stream enumeration section above for more details.
+
 ## Project structure
 
 ```
