@@ -14,6 +14,14 @@ web client that build on it live in separate repositories; see
 
 ## How a stream works
 
+**All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
+
+**Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
+- January 1, 2025 00:00:00 UTC = `1735689600` seconds since the Unix epoch (not `1735689600000` milliseconds).
+- February 1, 2025 00:00:00 UTC = `1738368000` seconds.
+
+Call `create_stream(sender, recipient, token, total_amount, 1735689600, 1738368000, 1735689600)` where `cliff_time == start_time` represents the no-cliff case. The ledger clock increments in seconds, so vesting progresses one second at a time from `start_time` toward `end_time`.
+
 A stream is defined by a total amount and a window of time:
 
 - **Start and end** bound the linear release. At the start nothing has vested;
@@ -152,6 +160,12 @@ breaking change to the on-chain interface.
 
 ## Contract interface
 
+**All amounts are integer base units (stroops), not whole tokens.** When calling `create_stream` or `withdraw_amount`, the `total_amount` and `amount` parameters must be denominated in the token's smallest indivisible unit. For Stellar native assets (XLM) and most Stellar Asset Contract (SAC) tokens, that unit is the stroop: one ten-millionth of a whole token (1 token = 10,000,000 stroops). Passing `100` for a seven-decimal token like XLM streams 0.00001 XLM, not 100 XLM.
+
+**Concrete example:** To stream **50 XLM** from Alice to Bob over one month, the caller must pass `total_amount = 500_000_000` (fifty million stroops) to `create_stream`. Similarly, to withdraw **10 XLM** from a stream, the caller must pass `amount = 100_000_000` (one hundred million stroops) to `withdraw_amount`. The contract does not accept or return whole-token amounts; all arithmetic is performed in base units to avoid fractional token handling.
+
+**Why base units:** Soroban tokens use integer arithmetic. Stellar Asset Contract balances are stored as `i128` stroops, and the contract performs all vesting calculations (`vested = total_amount * elapsed / duration`) in that same unit. Using base units everywhere eliminates rounding errors and keeps the interface aligned with the underlying token contract's transfer and balance semantics.
+
 | Function                                                                                         | Caller    | Description                                                               |
 | ------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------- |
 | `create_stream(sender, recipient, token, total_amount, start_time, end_time, cliff_time) -> u64` | sender    | Locks `total_amount` and opens a stream, returning its id.                |
@@ -252,11 +266,61 @@ Verification and test implementations can be reviewed in [`test.rs`](contracts/s
 
 Code 2 is permanently retired and will never be assigned to a new variant.
 
+### Event schemas for indexers
+
 The contract publishes `Created`, `Withdrawn`, and `Cancelled` events, each
 carrying the parties as topics so an indexer can filter streams by sender or
 recipient. `Created` also carries the schedule, so a stream can be recorded
 without a follow-up `get_stream` call, and `withdraw` and `withdraw_amount`
 publish the same `Withdrawn` event.
+
+All event definitions are in [`events.rs`](contracts/stream/src/events.rs). Each event uses Soroban's `#[contractevent]` macro and marks certain fields with `#[topic]` to enable efficient indexer filtering by address.
+
+**Created**
+
+```rust
+pub struct Created {
+    #[topic] sender: Address,
+    #[topic] recipient: Address,
+    id: u64,
+    token: Address,
+    total_amount: i128,
+    start_time: u64,
+    end_time: u64,
+    cliff_time: u64,
+}
+```
+
+Published when `create_stream` succeeds. Both `sender` and `recipient` are indexed topics so an indexer can query all streams for a given address in either role. The schedule fields (`total_amount`, `start_time`, `end_time`, `cliff_time`) allow full stream reconstruction without a follow-up `get_stream` call.
+
+**Withdrawn**
+
+```rust
+pub struct Withdrawn {
+    #[topic] recipient: Address,
+    id: u64,
+    amount: i128,
+}
+```
+
+Published by both `withdraw` and `withdraw_amount` when tokens are transferred to the recipient. `recipient` is a topic for filtering withdrawal activity by address. The `amount` field is the actual number of base units transferred in this withdrawal event.
+
+**Cancelled**
+
+```rust
+pub struct Cancelled {
+    #[topic] sender: Address,
+    id: u64,
+    recipient_amount: i128,
+    sender_refund: i128,
+}
+```
+
+Published when `cancel` stops a stream. `sender` is a topic. Both sides of the split are included: `recipient_amount` is the vested portion that remains claimable by the recipient, and `sender_refund` is the unvested amount refunded to the sender.
+
+**Compatibility note:** event field names, types, and topic markers form part of the contract's public ABI. Any change is breaking for indexers and off-chain consumers that depend on the topic layout to filter streams by participant. See the documentation comment in [`events.rs`](contracts/stream/src/events.rs) for the full rationale.
+
+**Concrete example:** an indexer filtering for all streams where Alice is the recipient would subscribe to `Created` events with `recipient == Alice` and to `Withdrawn` events with `recipient == Alice`. The `Created` event carries the full schedule, so the indexer can reconstruct the stream record and track its vesting progress over time. When Alice withdraws, the `Withdrawn` event provides the exact amount transferred without requiring a follow-up query to the contract.
 
 ## Stream enumeration
 
@@ -281,7 +345,7 @@ This is O(n) over all streams and is only suitable for small deployments or one-
 ## Storage lifetime
 
 Soroban storage entries expire on a ledger clock and are archived once their
-time to live runs out. The contract keeps two kinds of entry alive on the same
+time to live (TTL) runs out. The contract keeps two kinds of entry alive on the same
 schedule:
 
 | Entry                  | Storage type | Holds                               |
@@ -314,11 +378,26 @@ written over the record still sitting under `Stream(0)`. Extending the instance
 on the same schedule as stream entries keeps the counter alive for as long as
 the streams it numbers.
 
-**Limitation:** a stream left completely untouched for longer than `ENTRY_TTL`
-is archived like any other Soroban entry. Recovering it requires a restore
-operation submitted off-contract; the contract itself offers no way to revive
-an archived stream. Callers holding long-dated streams should read them
-periodically — any view call is enough.
+### TTL and archival behavior
+
+**Time-to-live mechanics:** Every stream entry and the contract instance has a TTL counter that decrements by one with each closed ledger. When the TTL reaches zero, the entry is archived and removed from active storage. Archived entries are no longer accessible via contract calls and must be restored through an off-chain Soroban restore operation before they can be read or modified again.
+
+**Automatic extension:** The contract extends TTL automatically when an entry is accessed and its remaining TTL is below `BUMP_THRESHOLD` (103,680 ledgers, roughly six days). The extension resets the TTL back to the full `ENTRY_TTL` window (518,400 ledgers, roughly thirty days). If the remaining TTL is above the threshold, no extension occurs to avoid paying unnecessary storage fees on every access.
+
+**What triggers extension:**
+- Any call to `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, `status`, `withdraw`, `withdraw_amount`, or `cancel` for a stream id extends that stream's TTL if it is below the bump threshold.
+- `create_stream` extends the instance TTL, ensuring the id counter remains accessible.
+
+**Archival limitation:** A stream left completely untouched for longer than `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived. Once archived:
+- The stream cannot be accessed via contract calls. Attempts to call `get_stream`, `withdraw`, or any other function for that stream id return a host storage error, not a `StreamError::StreamNotFound`.
+- The contract itself offers no way to revive an archived stream. Recovery requires an off-chain Soroban restore transaction submitted directly to the network.
+- Tokens locked in an archived stream remain in the contract address until the entry is restored and the stream is interacted with again.
+
+**Concrete example:** Alice creates a six-month stream to Bob on January 1. Bob does not check or withdraw from the stream for the entire six months. On February 1 (roughly 518,400 ledgers later, assuming a five-second ledger close time), the stream entry's TTL reaches zero and is archived. On July 1, when the stream has fully vested, Bob attempts to call `withdraw`. The call fails because the stream entry is archived. Bob must submit a Soroban restore transaction to bring the entry back into active storage, after which `withdraw` will succeed and transfer the vested tokens.
+
+**How to avoid archival:** Callers holding long-dated streams should read them periodically — any view call is enough. A single `get_stream(id)` or `withdrawable(id)` call every few weeks (well within the 30-day window) keeps the stream alive indefinitely. Indexers that track streams by listening to `Created` events can implement automated TTL extension by periodically querying tracked stream ids.
+
+**Compatibility note:** The TTL values (`ENTRY_TTL = 518_400` and `BUMP_THRESHOLD = 103_680`) are defined in the contract source ([`contract.rs`](contracts/stream/src/contract.rs)) and form part of the operational behavior. Changing these values in a redeployed contract would alter the archival window, affecting how often streams must be accessed to stay alive. The archival mechanism itself is part of the Soroban platform and cannot be disabled at the contract level.
 
 ## Security model
 
