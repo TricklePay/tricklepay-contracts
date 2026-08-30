@@ -189,7 +189,10 @@ impl<'a> StreamTest<'a> {
     pub fn stream_ttl(&self, id: u64) -> u32 {
         let address = self.contract.address.clone();
         self.env.as_contract(&address, || {
-            self.env.storage().persistent().get_ttl(&DataKey::Stream(id))
+            self.env
+                .storage()
+                .persistent()
+                .get_ttl(&DataKey::Stream(id))
         })
     }
 }
@@ -2067,15 +2070,21 @@ fn stream_ids_map_to_distinct_persistent_keys() {
 
     // Each key holds its own record.
     assert_eq!(
-        t.persistent_stream(&DataKey::Stream(0)).unwrap().total_amount,
+        t.persistent_stream(&DataKey::Stream(0))
+            .unwrap()
+            .total_amount,
         1_000
     );
     assert_eq!(
-        t.persistent_stream(&DataKey::Stream(1)).unwrap().total_amount,
+        t.persistent_stream(&DataKey::Stream(1))
+            .unwrap()
+            .total_amount,
         2_000
     );
     assert_eq!(
-        t.persistent_stream(&DataKey::Stream(2)).unwrap().total_amount,
+        t.persistent_stream(&DataKey::Stream(2))
+            .unwrap()
+            .total_amount,
         3_000
     );
 }
@@ -2166,12 +2175,7 @@ fn rejected_create_writes_no_storage_key() {
     t.set_time(100);
 
     let contract_address = t.contract.address.clone();
-    assert!(t.try_create_stream_for_raw(
-        &t.sender,
-        &contract_address,
-        &t.token_address,
-        1_000
-    ));
+    assert!(t.try_create_stream_for_raw(&t.sender, &contract_address, &t.token_address, 1_000));
 
     assert!(!t.persistent_has(&DataKey::Stream(0)));
     t.assert_nothing_happened(1_000);
