@@ -384,6 +384,33 @@ contract. It expects a funded identity configured with `stellar keys`.
 ./scripts/deploy.sh <identity-name>
 ```
 
+## Troubleshooting
+
+### Wrong build target
+If you see an error when building that mentions unsupported WebAssembly features or the wrong target:
+```text
+error: compiling for `wasm32-unknown-unknown` is not supported
+```
+**Fix:** Soroban SDK requires the newer target on recent Rust versions. Always build with `--target wasm32v1-none` instead of `wasm32-unknown-unknown`.
+
+### Missing toolchain component
+If you see an error indicating that the standard library cannot be found:
+```text
+error[E0463]: can't find crate for `core`
+  = note: the `wasm32v1-none` target may not be installed
+```
+**Fix:** Add the required WebAssembly target to your Rust toolchain by running:
+`rustup target add wasm32v1-none`
+
+### Unfunded identity
+When running the deployment script, if you encounter an error like:
+```text
+error: account not found
+```
+or a transaction failure due to insufficient XLM on testnet.
+**Fix:** Make sure the identity you are using is funded by running:
+`stellar keys fund <identity-name> --network testnet`
+
 ## Project structure
 
 ```
