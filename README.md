@@ -56,9 +56,10 @@ A stream is defined by a total amount and a window of time:
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
-rendering a progress bar. Cancelling freezes the total at whatever had vested,
-so a cancelled stream reports nothing locked and full progress even when it was
-stopped early.
+rendering a progress bar (for example, a value of 5000 means 50%). Cancelling
+freezes the total at whatever had vested, so a cancelled stream reports nothing
+locked and full progress (10000) even when it was stopped early. A stream with
+a `total_amount` of zero also reports full progress (10000) at all times.
 
 All amounts are in the token's smallest unit. All times are Unix timestamps in
 seconds, matching the ledger clock.
