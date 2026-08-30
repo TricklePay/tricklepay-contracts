@@ -568,6 +568,11 @@ in full in [THREAT_MODEL.md](THREAT_MODEL.md).
 - **tricklepay-frontend** — web client for creating and managing streams.
 - **tricklepay-docs** — architecture, security model, and contributor guides.
 
+## Code of conduct
+
+This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
+Reports can be sent to **conduct@tricklepay.dev**.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
