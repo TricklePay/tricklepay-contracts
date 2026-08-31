@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new feature or enhancement for the TricklePay contracts
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement to the TricklePay contracts. Before you start, please check the existing issues to see whether this has already been requested.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem or limitation are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or change you would like to see, including any contract entry points or interface changes.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any alternative approaches you have considered.
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility and security impact
+      description: Note any breaking changes to the public ABI, storage layout, or security model (see README and THREAT_MODEL.md).
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might help, such as use cases, mockups, or references.
+    validations:
+      required: false
