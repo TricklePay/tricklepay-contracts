@@ -491,6 +491,21 @@ cargo clippy --all-targets   # lints
 cargo audit --deny warnings   # uses .cargo/audit.toml ignores
 ```
 
+To run one test while iterating on a focused change, pass the test name after
+`cargo test`:
+
+```bash
+cargo test create_stream_locks_funds_and_assigns_id
+```
+
+The command is run from the workspace root and matches the test by name across
+the workspace. To see output printed by a passing test, pass `--nocapture` to
+the Rust test harness after `--`:
+
+```bash
+cargo test create_stream_locks_funds_and_assigns_id -- --nocapture
+```
+
 The audit ignores the unmaintained `derivative` and `paste` crates
 (`RUSTSEC-2024-0388` and `RUSTSEC-2024-0436`) and the yanked `spin` crate via
 `.cargo/audit.toml` because they are transitive Soroban test-host dependencies
