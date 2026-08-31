@@ -188,6 +188,48 @@ Compute its SHA-256 hash:
 sha256sum target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
+To run one test while iterating on a focused change, pass the test name after
+`cargo test`:
+
+```bash
+cargo test create_stream_locks_funds_and_assigns_id
+```
+
+The command is run from the workspace root and matches the test by name across
+the workspace. To see output printed by a passing test, pass `--nocapture` to
+the Rust test harness after `--`:
+
+```bash
+cargo test create_stream_locks_funds_and_assigns_id -- --nocapture
+```
+
+The audit ignores the unmaintained `derivative` and `paste` crates
+(`RUSTSEC-2024-0388` and `RUSTSEC-2024-0436`) and the yanked `spin` crate via
+`.cargo/audit.toml` because they are transitive Soroban test-host dependencies
+and are not used in the deployed WASM. Vulnerability advisories remain enabled;
+see `.cargo/audit.toml` for the allowlist.
+
+The suite covers the vesting math in isolation and the contract end to end:
+stepwise withdrawal, partial withdrawal and its over-request and non-positive
+guards, cliff gating, cancellation splits, the `locked` and `progress` views
+across a stream's life, the cliff and no-cliff schedules documented above,
+authorization requirements, invalid input, past and
+boundary time-window rejection, backdated-start acceptance, multiple token
+parallel streams, id-counter exhaustion at the `u64::MAX` boundary, rejection
+of the contract's own address in each participant role, self-streams, the
+documented precedence between validation groups, and double-withdraw and unknown-id guards.
+
+It also covers the storage and event behaviour described above: the order in
+which each entry point moves tokens and publishes its event, the indexed
+event topics, the silence of a rejected call on the event stream, `DataKey`
+encoding across the id range, and
+the persistent-entry and instance time-to-live bumps on both sides of
+`BUMP_THRESHOLD`.
+
+## Deploying to testnet
+
+`scripts/deploy.sh` wraps the Stellar CLI to build, install, and deploy the
+contract. It expects a funded identity configured with `stellar keys`.
 ### Step 2 — fetch the on-chain bytecode hash
 
 Every contract uploaded to a Stellar network is stored as a Wasm entry keyed
