@@ -3,9 +3,10 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all build check wasm test fmt fmt-check lint audit clean deploy
+.PHONY: all build wasm test fmt fmt-check lint audit clean deploy help
 
-all: fmt-check lint test
+# help is the default target; running plain `make` lists available targets.
+.DEFAULT_GOAL := help
 
 # Run the same checks as CI in the same order: formatting, lints, tests.
 # Use this before opening a pull request.
@@ -22,37 +23,33 @@ help:
 build:
 	cargo build
 
-# Optimized WASM artifact for deployment.
-wasm:
+wasm: ## Optimised WASM artifact for deployment.
 	cargo build --release --target $(WASM_TARGET)
 	@echo "built $(WASM)"
 
-# Run the full test suite.
-test:
+test: ## Run the full test suite.
 	cargo test
 
-# Format the workspace in place.
-fmt:
+fmt: ## Format the workspace in place.
 	cargo fmt
 
-# Verify formatting without modifying files (used in CI).
-fmt-check:
+fmt-check: ## Verify formatting without modifying files (used in CI).
 	cargo fmt --check
 
-# Lint every target and treat warnings as errors.
-lint:
+lint: ## Lint every target and treat warnings as errors.
 	cargo clippy --all-targets -- -D warnings
 
-# Audit dependencies. Unavoidable Soroban transitive warnings are ignored via
-# .cargo/audit.toml (derivative/paste unmaintained, spin yanked) - these crates
-# are not used in the deployed WASM; vulnerability advisories remain enabled.
-audit:
+audit: ## Audit dependencies for known vulnerabilities.
 	cargo audit --deny warnings
 
-# Remove build artifacts.
-clean:
+clean: ## Remove build artifacts.
 	cargo clean
 
-# Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
-deploy:
+deploy: ## Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
 	./scripts/deploy.sh $(ID)
+
+help: ## Show this help message.
+	@echo "Usage: make <target>"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*##"}; {printf "  %-14s %s\n", $$1, $$2}'
