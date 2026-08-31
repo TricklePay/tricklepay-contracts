@@ -3,6 +3,13 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
+.PHONY: all build check wasm test fmt fmt-check lint audit clean deploy
+
+all: fmt-check lint test
+
+# Run the same checks as CI in the same order: formatting, lints, tests.
+# Use this before opening a pull request.
+check: fmt-check lint test
 .PHONY: all help build wasm test fmt fmt-check lint audit clean deploy
 
 all: fmt-check lint test
