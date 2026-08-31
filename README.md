@@ -17,6 +17,7 @@ web client that build on it live in separate repositories; see
 **All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
 
 **Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
+
 - January 1, 2025 00:00:00 UTC = `1735689600` seconds since the Unix epoch (not `1735689600000` milliseconds).
 - February 1, 2025 00:00:00 UTC = `1738368000` seconds.
 
@@ -403,23 +404,30 @@ For a contract-only consumer with no event access:
 
 This is O(n) over all streams and is only suitable for small deployments or one-off queries. Production consumers should use event indexing.
 
+## Storage layout
+
+The contract keeps two kinds of entry in storage, both defined as variants of
+`DataKey` in [`storage.rs`](contracts/stream/src/storage.rs):
+
+| Key                    | Storage type | Holds                                                                                                                                                                                                                                                          |
+| ---------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DataKey::StreamCount` | instance     | The `u64` id to assign to the next stream. Initialized to `0` on the first `create_stream` call and incremented by one each time a new stream is opened; ids are never reused.                                                                                 |
+| `DataKey::Stream(id)`  | persistent   | One [`Stream`](contracts/stream/src/types.rs) record per stream id: `sender` (Address), `recipient` (Address), `token` (Address), `total_amount` (i128), `withdrawn` (i128), `start_time` (u64), `end_time` (u64), `cliff_time` (u64), and `cancelled` (bool). |
+
+**Why the split:** `StreamCount` is a single, contract-wide counter touched on
+every `create_stream` call, which is what instance storage is for. Each
+`Stream(id)` is one of arbitrarily many independent, per-id records, which is
+what persistent storage is for - each entry can expire and be restored on its
+own schedule, without affecting the contract instance or any other stream.
+
+TTL, bump thresholds, and archival behavior for both entry types are covered
+next, in [Storage lifetime](#storage-lifetime).
+
 ## Storage lifetime
 
 Soroban storage entries expire on a ledger clock and are archived once their
-time to live (TTL) runs out. The contract keeps two kinds of entry alive on the same
-schedule:
-
-| Entry                  | Storage type | Holds                               |
-| ---------------------- | ------------ | ----------------------------------- |
-| `DataKey::Stream(id)`  | persistent   | one stream record                   |
-| `DataKey::StreamCount` | instance     | the id to assign to the next stream |
-
-Both are granted `ENTRY_TTL` — 518,400 ledgers, roughly thirty days at the
-standard five second close time — and both are extended back to that full
-window whenever they are touched with fewer than `BUMP_THRESHOLD` (103,680
-ledgers, roughly six days) remaining. Above that mark a touch is a deliberate
-no-op, so an entry in frequent use does not pay to be re-extended on every
-access.
+time to live (TTL) runs out. Both entries described in
+[Storage layout](#storage-layout) above are kept alive on the same schedule:
 
 The two are refreshed by different things:
 
@@ -446,10 +454,12 @@ the streams it numbers.
 **Automatic extension:** The contract extends TTL automatically when an entry is accessed and its remaining TTL is below `BUMP_THRESHOLD` (103,680 ledgers, roughly six days). The extension resets the TTL back to the full `ENTRY_TTL` window (518,400 ledgers, roughly thirty days). If the remaining TTL is above the threshold, no extension occurs to avoid paying unnecessary storage fees on every access.
 
 **What triggers extension:**
+
 - Any call to `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, `status`, `withdraw`, `withdraw_amount`, or `cancel` for a stream id extends that stream's TTL if it is below the bump threshold.
 - `create_stream` extends the instance TTL, ensuring the id counter remains accessible.
 
 **Archival limitation:** A stream left completely untouched for longer than `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived. Once archived:
+
 - The stream cannot be accessed via contract calls. Attempts to call `get_stream`, `withdraw`, or any other function for that stream id return a host storage error, not a `StreamError::StreamNotFound`.
 - The contract itself offers no way to revive an archived stream. Recovery requires an off-chain Soroban restore transaction submitted directly to the network.
 - Tokens locked in an archived stream remain in the contract address until the entry is restored and the stream is interacted with again.
@@ -569,26 +579,35 @@ contract. It expects a funded identity configured with `stellar keys`.
 ## Troubleshooting
 
 ### Wrong build target
+
 If you see an error when building that mentions unsupported WebAssembly features or the wrong target:
+
 ```text
 error: compiling for `wasm32-unknown-unknown` is not supported
 ```
+
 **Fix:** Soroban SDK requires the newer target on recent Rust versions. Always build with `--target wasm32v1-none` instead of `wasm32-unknown-unknown`.
 
 ### Missing toolchain component
+
 If you see an error indicating that the standard library cannot be found:
+
 ```text
 error[E0463]: can't find crate for `core`
   = note: the `wasm32v1-none` target may not be installed
 ```
+
 **Fix:** Add the required WebAssembly target to your Rust toolchain by running:
 `rustup target add wasm32v1-none`
 
 ### Unfunded identity
+
 When running the deployment script, if you encounter an error like:
+
 ```text
 error: account not found
 ```
+
 or a transaction failure due to insufficient XLM on testnet.
 **Fix:** Make sure the identity you are using is funded by running:
 `stellar keys fund <identity-name> --network testnet`
