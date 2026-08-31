@@ -20,6 +20,23 @@
 /// rejecting any `total_amount` above `i64::MAX`. Because `elapsed` is
 /// bounded by `u64::MAX`, the product `i64::MAX * u64::MAX` fits inside
 /// `i128::MAX` and the multiplication is unconditionally safe.
+///
+/// # Examples
+///
+/// ```
+/// use tricklepay_stream::vesting::vested_amount;
+///
+/// let total = 1000;
+/// let start = 100;
+/// let end = 1100;
+/// let cliff = 600;
+///
+/// // Before the cliff, nothing has vested.
+/// assert_eq!(vested_amount(total, start, end, cliff, 300), 0);
+///
+/// // At or after the end time, the full amount has vested.
+/// assert_eq!(vested_amount(total, start, end, cliff, 1100), 1000);
+/// ```
 pub fn vested_amount(
     total_amount: i128,
     start_time: u64,
@@ -40,6 +57,15 @@ pub fn vested_amount(
 
 /// Amount the recipient can withdraw right now: whatever has vested minus
 /// whatever has already been taken. Never negative.
+///
+/// # Examples
+///
+/// ```
+/// use tricklepay_stream::vesting::withdrawable_amount;
+///
+/// assert_eq!(withdrawable_amount(500, 200), 300);
+/// assert_eq!(withdrawable_amount(200, 500), 0);
+/// ```
 pub fn withdrawable_amount(vested: i128, withdrawn: i128) -> i128 {
     let available = vested - withdrawn;
     if available < 0 {

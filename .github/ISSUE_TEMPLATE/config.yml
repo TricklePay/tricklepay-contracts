@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security
+    url: https://github.com/Glittersup/tricklepay-docs/security/policy
+    about: Report security vulnerabilities privately via the responsible disclosure policy. Please do not open a public issue for security bugs.

@@ -2129,6 +2129,21 @@ fn rejected_create_on_exhausted_counter_publishes_no_events() {
     assert_eq!(t.event_publishers(), vec![&t.env]);
 }
 
+/// The amount validation group rejects just as silently: a non-positive
+/// `total_amount` is refused before the participant checks pass through to
+/// any token movement, so no `Created` event — or any other event — escapes
+/// a call that never opened a stream.
+#[test]
+fn rejected_create_for_invalid_amount_publishes_no_events() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    assert!(t.try_create_stream_for_raw(&t.sender, &t.recipient, &t.token_address, 0));
+
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+    t.assert_nothing_happened(1_000);
+}
+
 /// A rejected `withdraw` publishes nothing either: `NothingToWithdraw` is
 /// returned before the payout, so no event describes a transfer that did not
 /// happen.
