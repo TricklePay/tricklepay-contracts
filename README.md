@@ -103,6 +103,40 @@ The two schedules agree everywhere from the cliff onward. A cliff does not
 change the rate or the total, it only withholds the earlier portion and then
 releases it in one step.
 
+### Worked example: `withdraw_amount`
+
+`withdraw_amount` is easy to confuse with `withdraw`: both pay out vested
+tokens, but `withdraw` always sweeps the full available balance while
+`withdraw_amount` lets the recipient take a smaller, named amount and leave
+the rest streaming.
+
+Using the same no-cliff reference stream from [Example schedule](#example-schedule)
+- 1000 units, `start_time = 100`, `end_time = 1100` - at `now = 600` the
+midpoint has been reached, so 500 units have vested and none have been
+withdrawn yet:
+
+    withdrawable(id) == 500
+
+The recipient draws only 200 of it:
+
+    withdraw_amount(id, 200) -> 200
+
+This transfers exactly 200 units and leaves the remaining 300 of the vested
+500 in the stream, still claimable and still separate from whatever vests
+next:
+
+    withdrawable(id) == 300
+
+Requesting more than that remaining balance fails outright - nothing is
+transferred and nothing is recorded as withdrawn:
+
+    withdraw_amount(id, 400) -> Err(InsufficientBalance)
+
+The call only checks the current withdrawable balance (300), not the
+stream's total or its still-locked portion (500), so lowering the request to
+300 or less succeeds; asking for 301 or more repeats the same failure until
+more of the stream vests.
+
 ### Boundary and edge-case notes
 
 A few common edge cases are worth keeping explicit:
