@@ -238,12 +238,39 @@ When calling `create_stream`, the full `total_amount` of tokens is pulled immedi
 
 - **Allowance Expectation:** The contract expects the `sender` to have a sufficient token balance and to have authorized the token transfer. On Soroban (SEP-41 / Stellar Asset Contract standard), calling `create_stream` invokes `sender.require_auth()`. In client integrations, the `sender` must either include the token transfer in their invocation authorization or grant an allowance to the stream contract equal to or exceeding `total_amount`.
 - **How it's checked:** The allowance and balance check occurs in step 5 of `create_stream` after all validation checks (authorization, participants, amount, schedule, capacity) pass. If `sender` lacks sufficient balance or token allowance/authorization, the token transfer panics before any stream state is created or stored.
-- **Worked example:**
-  1. A sender holds **1,000 stroops** of token `T`.
-  2. The sender approves/authorizes the stream contract to transfer **1,000 stroops** of token `T`.
-  3. The sender invokes `create_stream(sender, recipient, token_T, 1000, 100, 1100, 100)` (where `cliff_time == start_time == 100` represents the no-cliff vesting case).
-  4. Step 5 executes `TokenClient::new(&env, &token_T).transfer(&sender, &contract_address, &1000)`.
-  5. The contract balance increases by 1,000 stroops, the sender balance decreases by 1,000 stroops, and stream ID `0` is initialized with linear vesting math `vested = total_amount * elapsed / duration` matching the no-cliff example schedule in [`vesting.rs`](contracts/stream/src/vesting.rs#L108-L116).
+
+#### Worked `create_stream` example
+
+Alice wants to stream **1,000 stroops** of token `T` to Bob from Unix
+timestamp `100` through timestamp `1100`, with no cliff. Assume a local or test
+ledger whose current timestamp is `50`, and that this is the first stream
+created by a fresh contract deployment. The complete call is:
+
+```text
+stream_id = create_stream(
+    Alice,   // sender
+    Bob,     // recipient
+    token_T, // token contract
+    1_000,   // total_amount, in the token's smallest unit
+    100,     // start_time, in Unix seconds
+    1_100,   // end_time, in Unix seconds
+    100,     // cliff_time; equal to start_time means no cliff
+)
+
+stream_id == 0
+```
+
+Alice must authorize the call and have at least 1,000 stroops available. When
+the call succeeds, the full 1,000 stroops are transferred from Alice into the
+stream contract immediately; creation does not transfer the tokens gradually.
+The contract then stores the funded schedule and returns `0`, the new stream's
+`u64` id. Stream ids increase from zero, so the next successful creation returns
+`1`. Bob and Alice use the returned id in later calls such as `get_stream(0)`,
+`withdraw(0)`, and `cancel(0)`.
+
+For this schedule, vesting follows `vested = total_amount * elapsed / duration`
+and matches the no-cliff example in
+[`vesting.rs`](contracts/stream/src/vesting.rs#L108-L116).
 
 Verification and test implementations can be reviewed in [`test.rs`](contracts/stream/src/test.rs#L128-L157).
 
