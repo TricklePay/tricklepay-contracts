@@ -121,3 +121,7 @@ linear share — the rounding always favours the contract.
 
 The schedule above divides evenly, so truncation has no visible effect. To see
 it, consider **10 units over 
+
+## Recent Changes
+- Ongoing improvements and fixes as part of active development.
+- See commit history and open issues for detailed change tracking.
