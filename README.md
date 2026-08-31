@@ -136,6 +136,39 @@ stream's total or its still-locked portion (500), so lowering the request to
 300 or less succeeds; asking for 301 or more repeats the same failure until
 more of the stream vests.
 
+### Worked example: `cancel`
+
+Using the same no-cliff reference stream — 1000 units, `start_time = 100`,
+`end_time = 1100` — cancelled at `now = 600` (the midpoint):
+
+- **500 units have vested.** The recipient's accrued share is frozen and stays
+  claimable via `withdraw` or `withdraw_amount` at any time after cancellation.
+- **500 units have not vested.** This unvested remainder is refunded to the
+  sender immediately by the `cancel` call itself — no separate step required.
+- **No further vesting occurs.** The stream is frozen at `total_amount = 500`
+  and `end_time = 600`; the vesting window is closed, so the vested amount
+  cannot grow beyond what had accrued at the cancellation instant.
+
+```text
+cancel(id) -> 500   // 500 refunded to sender; 500 stays claimable by recipient
+```
+
+If the recipient had already withdrawn 200 of the 500 vested units before
+cancellation, the split is the same — the sender still gets only the 500
+unvested units back, not the 200 the recipient already took. The recipient
+can then claim the remaining 300 of their vested share:
+
+```text
+// at now = 600, after recipient withdrew 200 earlier:
+cancel(id)           -> 500   // sender refund (unvested only)
+withdraw(id)         -> 300   // recipient claims their remaining vested balance
+```
+
+A `cancel` call is rejected with `StreamAlreadyCompleted` if `now >= end_time`
+— once the stream has fully vested there is nothing unvested to refund. A
+stream that has already been cancelled cannot be cancelled again
+(`AlreadyCancelled`).
+
 ### Boundary and edge-case notes
 
 A few common edge cases are worth keeping explicit:
