@@ -5,10 +5,11 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
+keywords = ["soroban", "stellar", "streaming", "payments"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-doctest = false
+
 
 [dependencies]
 soroban-sdk = { workspace = true }
