@@ -61,7 +61,8 @@ impl StreamContract {
     /// Only once all five pass are tokens transferred and the stream stored.
     // A contract entry point: every field is part of the public call shape,
     // so bundling them into a struct would only obscure the interface.
-    #[allow(clippy::too_many_arguments)]
+    // The too-many-arguments threshold is raised to 8 in clippy.toml to
+    // accommodate this function without an inline allow attribute.
     pub fn create_stream(
         env: Env,
         sender: Address,

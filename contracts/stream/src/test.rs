@@ -5,10 +5,11 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events as _, Ledger as _,
     },
-    token, vec, xdr, Address, Env, TryFromVal, Vec,
+    token, vec, xdr, Address, Env, Event, TryFromVal, Vec,
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
+use crate::events::{Cancelled, Created, Withdrawn};
 use crate::storage::{self, DataKey, BUMP_THRESHOLD, ENTRY_TTL};
 use crate::{Stream, StreamError, StreamStatus, MAX_AMOUNT};
 
@@ -164,6 +165,17 @@ impl<'a> StreamTest<'a> {
         ]
     }
 
+    /// Assert the latest stream event carries the expected topic list.
+    pub fn assert_latest_stream_event_topics(&self, expected: xdr::ContractEvent) {
+        let all_events = self.env.events().all();
+        let latest = all_events.events().last().unwrap();
+        let xdr::ContractEventBody::V0(latest_body) = &latest.body;
+        let xdr::ContractEventBody::V0(expected_body) = &expected.body;
+        assert_eq!(latest.ext, expected.ext);
+        assert_eq!(latest.type_, expected.type_);
+        assert_eq!(latest_body.topics, expected_body.topics);
+    }
+
     /// Whether a persistent entry exists under `key`, read straight out of the
     /// contract's storage rather than through an entry point. Entry points
     /// answer `StreamNotFound` for both "no such key" and "key holds
@@ -230,6 +242,65 @@ fn create_stream_locks_funds_and_assigns_id() {
     assert_eq!(stream.total_amount, 1_000);
     assert_eq!(stream.withdrawn, 0);
     assert!(!stream.cancelled);
+}
+
+#[test]
+fn one_sender_can_stream_multiple_tokens_in_parallel() {
+    let t = StreamTest::setup(1_000);
+    let second_issuer = Address::generate(&t.env);
+    let second_sac = t.env.register_stellar_asset_contract_v2(second_issuer);
+    let second_token_address = second_sac.address();
+    let second_token = token::TokenClient::new(&t.env, &second_token_address);
+    let second_token_admin = token::StellarAssetClient::new(&t.env, &second_token_address);
+    second_token_admin.mint(&t.sender, &2_000);
+    t.set_time(100);
+
+    let first_id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &400,
+        &100,
+        &1_100,
+        &100,
+    );
+    let second_id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &second_token_address,
+        &900,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    assert_eq!(first_id, 0);
+    assert_eq!(second_id, 1);
+    assert_eq!(t.contract.stream_count(), 2);
+    assert_eq!(t.token.balance(&t.sender), 600);
+    assert_eq!(second_token.balance(&t.sender), 1_100);
+    assert_eq!(t.token.balance(&t.contract.address), 400);
+    assert_eq!(second_token.balance(&t.contract.address), 900);
+
+    let first = t.contract.get_stream(&first_id);
+    assert_eq!(first.token, t.token_address);
+    assert_eq!(first.total_amount, 400);
+    assert_eq!(first.withdrawn, 0);
+
+    let second = t.contract.get_stream(&second_id);
+    assert_eq!(second.token, second_token_address);
+    assert_eq!(second.total_amount, 900);
+    assert_eq!(second.withdrawn, 0);
+
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw(&first_id), 200);
+    assert_eq!(t.contract.withdraw(&second_id), 450);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+    assert_eq!(second_token.balance(&t.recipient), 450);
+    assert_eq!(t.token.balance(&t.contract.address), 200);
+    assert_eq!(second_token.balance(&t.contract.address), 450);
+    assert_eq!(t.contract.get_stream(&first_id).withdrawn, 200);
+    assert_eq!(t.contract.get_stream(&second_id).withdrawn, 450);
 }
 
 #[test]
@@ -1944,6 +2015,91 @@ fn lifecycle_events_follow_operation_order() {
     assert_eq!(t.event_publishers(), t.transfer_then_announce());
 }
 
+#[test]
+fn created_event_topics_index_sender_and_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &750,
+        &100,
+        &1_100,
+        &400,
+    );
+
+    assert_eq!(id, 0);
+    t.assert_latest_stream_event_topics(
+        Created {
+            sender: t.sender.clone(),
+            recipient: t.recipient.clone(),
+            id,
+            token: t.token_address.clone(),
+            total_amount: 750,
+            start_time: 100,
+            end_time: 1_100,
+            cliff_time: 400,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    let stream = t.contract.get_stream(&id);
+    assert_eq!(stream.sender, t.sender);
+    assert_eq!(stream.recipient, t.recipient);
+    assert_eq!(stream.token, t.token_address);
+    assert_eq!(t.token.balance(&t.contract.address), 750);
+}
+
+#[test]
+fn withdrawn_event_topics_index_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    let amount = t.contract.withdraw(&id);
+
+    assert_eq!(amount, 500);
+    t.assert_latest_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+}
+
+#[test]
+fn cancelled_event_topics_index_sender() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    let refund = t.contract.cancel(&id);
+
+    assert_eq!(refund, 500);
+    t.assert_latest_stream_event_topics(
+        Cancelled {
+            sender: t.sender.clone(),
+            id,
+            recipient_amount: 500,
+            sender_refund: refund,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 500);
+}
+
 /// A creation rejected for an invalid participant publishes nothing: the
 /// participant checks run before any token moves, so there is neither a
 /// transfer event nor a `Created` event for an indexer to unwind.
@@ -1971,6 +2127,21 @@ fn rejected_create_on_exhausted_counter_publishes_no_events() {
     assert!(t.try_create_stream_for_raw(&t.sender, &t.recipient, &t.token_address, 1_000));
 
     assert_eq!(t.event_publishers(), vec![&t.env]);
+}
+
+/// The amount validation group rejects just as silently: a non-positive
+/// `total_amount` is refused before the participant checks pass through to
+/// any token movement, so no `Created` event — or any other event — escapes
+/// a call that never opened a stream.
+#[test]
+fn rejected_create_for_invalid_amount_publishes_no_events() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    assert!(t.try_create_stream_for_raw(&t.sender, &t.recipient, &t.token_address, 0));
+
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+    t.assert_nothing_happened(1_000);
 }
 
 /// A rejected `withdraw` publishes nothing either: `NothingToWithdraw` is

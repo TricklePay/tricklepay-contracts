@@ -1,0 +1,12 @@
+# clippy.toml — project-wide Clippy configuration
+#
+# CI runs `cargo clippy --all-targets -- -D warnings`, so every lint here
+# must continue to pass under that invocation.  Add a comment for every
+# deliberate suppression so future contributors know what was decided and why.
+
+# `create_stream` is a public contract entry point whose eight parameters are
+# all distinct fields in the on-chain ABI.  Collapsing them into a struct
+# would only obscure the interface, so the too-many-arguments lint is raised
+# from the default threshold of 7 to 8 to accommodate that function without
+# needing an inline `#[allow]`.
+too-many-arguments-threshold = 8

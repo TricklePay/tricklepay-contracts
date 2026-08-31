@@ -1,3 +1,17 @@
+//! Persistent storage keys and time-to-live management.
+//!
+//! This module owns the two storage entries the contract keeps: the instance
+//! entry `StreamCount`, which is the monotonic id counter, and the persistent
+//! `Stream(id)` entries, one per stream record. Both are granted `ENTRY_TTL`
+//! ledgers of lifetime and are extended back to that full window whenever they
+//! are touched with fewer than `BUMP_THRESHOLD` ledgers remaining, so an entry
+//! in frequent use does not pay to be re-extended on every access.
+//!
+//! Stream entries are bumped as a side effect of every read or write. The
+//! instance entry is bumped only by `create_stream` via [`extend_instance_ttl`];
+//! nothing extends it during a read, so a contract queried but never written
+//! to will run its instance down.
+
 use soroban_sdk::{contracttype, Env};
 
 use crate::types::Stream;
@@ -16,8 +30,25 @@ pub(crate) const BUMP_THRESHOLD: u32 = 103_680;
 #[derive(Clone)]
 pub enum DataKey {
     /// Monotonic counter holding the id to assign to the next stream.
+    ///
+    /// Stored in **instance** storage. It is initialised to `0` on the first
+    /// `create_stream` call and incremented by one each time a new stream is
+    /// opened. Ids are never reused: once a value has been assigned it stays
+    /// consumed even if the corresponding stream is cancelled or fully vested.
+    ///
+    /// Because instance storage is not bumped by read-only calls, this entry
+    /// is extended explicitly by [`extend_instance_ttl`] inside `create_stream`
+    /// to keep it alive for as long as the streams it numbers.
     StreamCount,
-    /// A stream record, keyed by its id.
+    /// A single stream record, keyed by its numeric id.
+    ///
+    /// Stored in **persistent** storage. Each entry holds the full [`Stream`]
+    /// struct — participants, token, schedule, withdrawn amount, and cancelled
+    /// flag — for one stream. The entry is extended to [`ENTRY_TTL`] ledgers
+    /// whenever it is read or written, so any view or mutating call on a stream
+    /// resets its countdown. A stream that is never touched for longer than
+    /// [`ENTRY_TTL`] ledgers will be archived by the network and must be
+    /// restored off-contract before it can be used again.
     Stream(u64),
 }
 

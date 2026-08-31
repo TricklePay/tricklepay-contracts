@@ -1,3 +1,13 @@
+//! Events emitted by the stream contract.
+//!
+//! These types form part of the contract's public interface. Indexers and
+//! off-chain consumers depend on the topic layout and payload fields to filter
+//! streams by participant and to reconstruct stream state without follow-up
+//! contract calls. The shapes of these events are therefore effectively an API
+//! contract: any change to a topic, a field name, or a field type is a
+//! breaking change for downstream consumers and should be treated with the
+//! same care as a change to a contract entry point.
+
 use soroban_sdk::{contractevent, Address};
 
 /// Emitted when a new stream is opened. Indexers can filter on the `sender`

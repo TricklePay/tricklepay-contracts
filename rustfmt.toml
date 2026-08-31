@@ -1,0 +1,21 @@
+# rustfmt.toml — project-wide rustfmt configuration
+#
+# These settings pin the formatting to the defaults used by the pinned
+# toolchain (rustfmt 1.8.0-stable) so that `cargo fmt` produces the same
+# output locally as it does in CI.  Running `cargo fmt --check` on an
+# unchanged tree after adding this file must continue to pass.
+#
+# Only stable-channel settings are listed here.  Options that require the
+# nightly toolchain are intentionally omitted so the file works with the
+# pinned stable toolchain in rust-toolchain.toml.
+
+# Edition must match the workspace Cargo.toml so rustfmt parses the source
+# correctly.
+edition = "2021"
+
+# Line length cap.  100 is the rustfmt default and matches the existing code.
+max_width = 100
+
+# Use four spaces, no hard tabs.
+tab_spaces = 4
+hard_tabs = false
