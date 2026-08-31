@@ -14,6 +14,15 @@ web client that build on it live in separate repositories; see
 
 ## How a stream works
 
+**All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
+
+**Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
+
+- January 1, 2025 00:00:00 UTC = `1735689600` seconds since the Unix epoch (not `1735689600000` milliseconds).
+- February 1, 2025 00:00:00 UTC = `1738368000` seconds.
+
+Call `create_stream(sender, recipient, token, total_amount, 1735689600, 1738368000, 1735689600)` where `cliff_time == start_time` represents the no-cliff case. The ledger clock increments in seconds, so vesting progresses one second at a time from `start_time` toward `end_time`.
+
 A stream is defined by a total amount and a window of time:
 
 - **Start and end** bound the linear release. At the start nothing has vested;
@@ -92,6 +101,85 @@ With a cliff at the midpoint, `cliff_time == 600`:
 The two schedules agree everywhere from the cliff onward. A cliff does not
 change the rate or the total, it only withholds the earlier portion and then
 releases it in one step.
+
+### Worked example: `withdraw_amount`
+
+`withdraw_amount` is easy to confuse with `withdraw`: both pay out vested
+tokens, but `withdraw` always sweeps the full available balance while
+`withdraw_amount` lets the recipient take a smaller, named amount and leave
+the rest streaming.
+
+Using the same no-cliff reference stream from [Example schedule](#example-schedule)
+- 1000 units, `start_time = 100`, `end_time = 1100` - at `now = 600` the
+midpoint has been reached, so 500 units have vested and none have been
+withdrawn yet:
+
+    withdrawable(id) == 500
+
+The recipient draws only 200 of it:
+
+    withdraw_amount(id, 200) -> 200
+
+This transfers exactly 200 units and leaves the remaining 300 of the vested
+500 in the stream, still claimable and still separate from whatever vests
+next:
+
+    withdrawable(id) == 300
+
+Requesting more than that remaining balance fails outright - nothing is
+transferred and nothing is recorded as withdrawn:
+
+    withdraw_amount(id, 400) -> Err(InsufficientBalance)
+
+The call only checks the current withdrawable balance (300), not the
+stream's total or its still-locked portion (500), so lowering the request to
+300 or less succeeds; asking for 301 or more repeats the same failure until
+more of the stream vests.
+
+### Worked example: `cancel`
+
+Using the same no-cliff reference stream — 1000 units, `start_time = 100`,
+`end_time = 1100` — cancelled at `now = 600` (the midpoint):
+
+- **500 units have vested.** The recipient's accrued share is frozen and stays
+  claimable via `withdraw` or `withdraw_amount` at any time after cancellation.
+- **500 units have not vested.** This unvested remainder is refunded to the
+  sender immediately by the `cancel` call itself — no separate step required.
+- **No further vesting occurs.** The stream is frozen at `total_amount = 500`
+  and `end_time = 600`; the vesting window is closed, so the vested amount
+  cannot grow beyond what had accrued at the cancellation instant.
+
+```text
+cancel(id) -> 500   // 500 refunded to sender; 500 stays claimable by recipient
+```
+
+If the recipient had already withdrawn 200 of the 500 vested units before
+cancellation, the split is the same — the sender still gets only the 500
+unvested units back, not the 200 the recipient already took. The recipient
+can then claim the remaining 300 of their vested share:
+
+```text
+// at now = 600, after recipient withdrew 200 earlier:
+cancel(id)           -> 500   // sender refund (unvested only)
+withdraw(id)         -> 300   // recipient claims their remaining vested balance
+```
+
+A `cancel` call is rejected with `StreamAlreadyCompleted` if `now >= end_time`
+— once the stream has fully vested there is nothing unvested to refund. A
+stream that has already been cancelled cannot be cancelled again
+(`AlreadyCancelled`).
+
+### Boundary and edge-case notes
+
+A few common edge cases are worth keeping explicit:
+
+- An exact-end withdrawal is valid: once `now >= end_time`, the stream is fully
+  vested and `withdraw` can move the remaining balance out in one call.
+- A stream with `cliff_time == start_time` is a normal stream with no cliff; the
+  vesting logic simply reduces to the standard start-time gate.
+- Cancellation is never retroactive. The recipient keeps all vested funds up to
+  the cancellation instant, and the sender receives only the remaining unvested
+  balance.
 
 ### Integer rounding
 

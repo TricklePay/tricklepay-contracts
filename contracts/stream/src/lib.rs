@@ -11,7 +11,7 @@ mod error;
 mod events;
 mod storage;
 mod types;
-mod vesting;
+pub mod vesting;
 
 #[cfg(test)]
 mod test;
