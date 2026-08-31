@@ -164,6 +164,69 @@ cancel(id)           -> 500   // sender refund (unvested only)
 withdraw(id)         -> 300   // recipient claims their remaining vested balance
 ```
 
+## Verifying a deployment
+
+Anyone can confirm that a live contract was built from this source by comparing
+the on-chain bytecode hash with the hash produced by a local build.
+
+### Step 1 — produce a reproducible local build
+
+The WASM artifact must be built with the same toolchain version that the
+deployed binary used. The pinned toolchain in `rust-toolchain.toml` ensures
+this, but only if you have not overridden it:
+
+```bash
+cargo build --release --target wasm32v1-none
+```
+
+The optimised artifact is written to
+`target/wasm32v1-none/release/tricklepay_stream.wasm`.
+
+Compute its SHA-256 hash:
+
+```bash
+sha256sum target/wasm32v1-none/release/tricklepay_stream.wasm
+```
+
+### Step 2 — fetch the on-chain bytecode hash
+
+Every contract uploaded to a Stellar network is stored as a Wasm entry keyed
+by the SHA-256 hash of the bytecode. That hash is also recorded in the
+contract's `instance` ledger entry as the `executable` field. Retrieve it with
+the Stellar CLI:
+
+```bash
+# Replace <CONTRACT_ID> with the deployed bech32 contract address and
+# <NETWORK> with "testnet", "mainnet", or a custom RPC URL.
+stellar contract inspect --id <CONTRACT_ID> --network <NETWORK>
+```
+
+The output includes a `wasm_hash` field. This is the SHA-256 hash of the
+bytecode the network is executing.
+
+Alternatively, query the RPC directly:
+
+```bash
+stellar contract fetch --id <CONTRACT_ID> --network <NETWORK> \
+  --out-file fetched.wasm
+sha256sum fetched.wasm
+```
+
+### Step 3 — compare
+
+If the hash from step 1 matches the `wasm_hash` from step 2, the live
+contract was compiled from this exact source tree with the pinned toolchain.
+
+**Caveat — reproducibility:** Rust WASM builds are not guaranteed to be
+bit-for-bit reproducible across different host platforms, OS versions, or LLVM
+releases, even when the same toolchain version is used. In practice, the pinned
+toolchain in `rust-toolchain.toml` makes builds reproducible across Linux
+hosts; macOS or Windows hosts may produce a hash that differs from the deployed
+one even though the source is identical. If hashes do not match, try building
+on a Linux host (or a Docker image with the pinned Rust toolchain) before
+concluding that the deployment differs from the source.
+
+## Project structure
 A `cancel` call is rejected with `StreamAlreadyCompleted` if `now >= end_time`
 — once the stream has fully vested there is nothing unvested to refund. A
 stream that has already been cancelled cannot be cancelled again
