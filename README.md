@@ -44,9 +44,7 @@ A stream is defined by a total amount and a window of time:
   everything while `now < cliff_time || now < start_time`, so when the two are
   equal that reduces to `now < start_time`: exactly the start check every
   stream already applies. The no-cliff case is not special-cased anywhere in
-  the vesting math, it simply falls out of the same expression, and from
-  `start_time` onward the amount is the plain linear
-  `total_amount * elapsed / duration`. At the other end of the range,
+  the vesting math, it simply falls out of the same expression. This is the usual default when a stream should begin vesting immediately from `start_time` rather than waiting for an explicit cliff. At the other end of the range,
   `cliff_time == end_time` is equally valid and withholds everything until the
   window closes — a pure lockup that vests in one step.
 
@@ -94,7 +92,7 @@ Without a cliff, `cliff_time == start_time == 100` (no cliff):
 With a cliff at the midpoint, `cliff_time == 600`:
 
 | Time | Vested | Locked | Description                                                                 |
-| ---- | ------ | ------ | --------------------------------------------------------------------------- |
+| ---- | ------ | ------ | ----------------------------------------------------------------------------- |
 | 300  | 0      | 1000   | past the start, but the cliff has not been reached; all 1000 remains locked |
 | 600  | 500    | 500    | the cliff releases everything accrued since the start, unlocking 500        |
 | 850  | 750    | 250    | vesting continues linearly from the cliff onward                            |
