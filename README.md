@@ -163,7 +163,28 @@ can then claim the remaining 300 of their vested share:
 cancel(id)           -> 500   // sender refund (unvested only)
 withdraw(id)         -> 300   // recipient claims their remaining vested balance
 ```
+### Worked example: `cancel` with a cliff
 
+When a stream has a cliff, the vested amount before the cliff is **zero**,
+even if time has passed since `start_time`. Cancelling before the cliff
+refunds the **entire** total to the sender and leaves the recipient with
+nothing claimable.
+
+Using a reference stream with a cliff — 1000 units, `start_time = 100`,
+`end_time = 1100`, `cliff_time = 600`, cancelled at `now = 300`
+(before the cliff):
+
+- **0 units have vested.** The cliff blocks all accrual until `now >= 600`.
+- **1000 units are refunded to the sender.** The entire total is unvested.
+- **The recipient claimable balance is 0.** Nothing has vested, so nothing
+  can be withdrawn.
+
+Cancelling **at** the cliff (or any point after) behaves like the no-cliff
+example: whatever has accrued is split between the two parties. At
+`now = 600` (the cliff instant), 500 units have vested:
+
+In all cases, cancellation permanently freezes the stream. No further
+vesting occurs after the call.
 ## Verifying a deployment
 
 Anyone can confirm that a live contract was built from this source by comparing
