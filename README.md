@@ -182,6 +182,16 @@ cargo build --release --target wasm32v1-none
 The optimised artifact is written to
 `target/wasm32v1-none/release/tricklepay_stream.wasm`.
 
+**Why `wasm32v1-none`?** On Rust 1.82 and later, the familiar
+`wasm32-unknown-unknown` target enables WASM `reference-types` and
+`multi-value` features by default. The Soroban host rejects these
+features, so builds targeting `wasm32-unknown-unknown` produce a WASM
+module the network cannot execute. `wasm32v1-none` (Rust 1.84+) is the
+supported target that avoids those extensions and produces a module the
+Soroban environment accepts. If you build with the wrong target, Soroban
+fails with a `WasmVm` error about unsupported `reference-types` or
+`multi-value` features.
+
 Compute its SHA-256 hash:
 
 ```bash
