@@ -9,11 +9,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Pin every external action to a full commit SHA so moving tags cannot change CI code.
+# Keep the original version in a comment to make pin updates reviewable.
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 [pinned by action-pin]
 
       - name: Install Rust
         run: |
@@ -22,7 +24,7 @@ jobs:
           rustup target add wasm32v1-none
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 [pinned by action-pin]
         with:
           path: |
             ~/.cargo/registry
@@ -49,7 +51,7 @@ jobs:
         run: cargo build --locked --release --target wasm32v1-none
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 [pinned by action-pin]
         with:
           name: tricklepay_stream-${{ github.sha }}
           path: target/wasm32v1-none/release/tricklepay_stream.wasm
