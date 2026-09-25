@@ -174,6 +174,7 @@ impl<'a> StreamTest<'a> {
         assert_eq!(latest.ext, expected.ext);
         assert_eq!(latest.type_, expected.type_);
         assert_eq!(latest_body.topics, expected_body.topics);
+        assert_eq!(latest_body.data, expected_body.data);
     }
 
     /// Whether a persistent entry exists under `key`, read straight out of the
@@ -1043,7 +1044,11 @@ fn views_remain_correct_after_recipient_drains_cancelled_stream() {
     // to confirm the frozen state does not change with the clock.
     t.set_time(600);
     t.contract.cancel(&id);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 500);
     t.set_time(2_000);
+
+    assert_eq!(t.contract.get_stream(&id).total_amount, 500);
+    assert_eq!(t.contract.vested(&id), 500);
 
     // Recipient drains their share.
     let withdrawn = t.contract.withdraw(&id);
@@ -1490,6 +1495,29 @@ fn create_stream_rejects_end_time_in_the_past() {
     // No stream was created and no funds left the sender.
     assert_eq!(t.contract.stream_count(), 0);
     assert_eq!(t.token.balance(&t.sender), 1_000);
+}
+
+/// A schedule whose entire window has elapsed is rejected before funding or
+/// storage, rather than creating a stream that is already fully vested.
+#[test]
+fn create_stream_rejects_an_entirely_past_schedule_without_state_change() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(2_000);
+
+    let result = t.contract.try_create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    assert_eq!(result, Err(Ok(StreamError::StreamWindowInPast)));
+    assert_eq!(t.contract.stream_count(), 0);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
 /// A stream whose `end_time` equals the current ledger timestamp is also
@@ -2182,8 +2210,16 @@ fn stream_ids_map_to_distinct_persistent_keys() {
     // Distinct amounts so an aliased key shows up as a wrong value, not just a
     // wrong count.
     let first = t.open_default_stream(1_000);
+    assert_eq!(t.contract.stream_count(), 1);
+    assert_eq!(t.contract.get_stream(&first).total_amount, 1_000);
+
     let second = t.open_default_stream(2_000);
+    assert_eq!(t.contract.stream_count(), 2);
+    assert_eq!(t.contract.get_stream(&second).total_amount, 2_000);
+
     let third = t.open_default_stream(3_000);
+    assert_eq!(t.contract.stream_count(), 3);
+    assert_eq!(t.contract.get_stream(&third).total_amount, 3_000);
     assert_eq!((first, second, third), (0, 1, 2));
 
     assert!(t.persistent_has(&DataKey::Stream(0)));
