@@ -163,6 +163,89 @@ can then claim the remaining 300 of their vested share:
 cancel(id)           -> 500   // sender refund (unvested only)
 withdraw(id)         -> 300   // recipient claims their remaining vested balance
 ```
+### Worked example: vesting schedule with a cliff
+
+This example uses a one-year stream with a three-month cliff — the shape
+typical for employee equity grants. Concrete dates and amounts are used so the
+step-change at the cliff is easy to see.
+
+**Parameters:**
+
+| Field | Value | Unix seconds |
+| ----- | ----- | ------------ |
+| `total_amount` | 12 000 units | — |
+| `start_time` | 1 Jan 2025 00:00 UTC | `1735689600` |
+| `cliff_time` | 1 Apr 2025 00:00 UTC | `1743465600` |
+| `end_time` | 1 Jan 2026 00:00 UTC | `1767225600` |
+
+Duration = 365 days = 31 536 000 seconds.  
+Cliff offset from start = 90 days = 7 776 000 seconds.
+
+**Create the stream** (no cliff is expressed as `cliff_time == start_time`; here
+we set an explicit cliff):
+
+```text
+create_stream(
+  sender, recipient, token,
+  total_amount = 12000,
+  start_time   = 1735689600,   // 1 Jan 2025
+  end_time     = 1767225600,   // 1 Jan 2026
+  cliff_time   = 1743465600    // 1 Apr 2025
+)
+```
+
+**Withdrawable amount at three points in time:**
+
+*Before the cliff — 1 Feb 2025 (`now = 1738368000`):*
+
+```
+elapsed = 1738368000 - 1735689600 = 2678400 s  (31 days)
+now < cliff_time  →  vested = 0
+withdrawable = 0
+```
+
+One month has passed since the start and 1/12 of the total has accrued by the
+linear schedule, but the cliff gate is still blocking it. Nothing can be
+withdrawn yet.
+
+*At the cliff — 1 Apr 2025 (`now = 1743465600`):*
+
+```
+elapsed = 1743465600 - 1735689600 = 7776000 s  (90 days)
+vested  = 12000 * 7776000 / 31536000 = 2958 units  (truncated)
+withdrawable = 2958
+```
+
+The cliff releases the entire 90 days of accrual in one step. The recipient
+can withdraw up to 2958 units immediately, even though nothing was available
+one second earlier.
+
+*Six months in — 1 Jul 2025 (`now = 1751328000`):*
+
+```
+elapsed = 1751328000 - 1735689600 = 15638400 s  (181 days)
+vested  = 12000 * 15638400 / 31536000 = 5950 units  (truncated)
+withdrawable = 5950   // assuming nothing withdrawn yet
+```
+
+Vesting has continued linearly from the cliff. If the recipient withdrew the
+2958 cliff lump on 1 Apr, the withdrawable balance at this point is
+`5950 - 2958 = 2992` units.
+
+**Summary table:**
+
+| Date | `now` | Vested | Withdrawable (nothing taken yet) |
+| ---- | ----- | ------ | -------------------------------- |
+| 1 Feb 2025 (1 month in, before cliff) | `1738368000` | 0 | **0** |
+| 1 Apr 2025 (cliff, 3 months in) | `1743465600` | 2958 | **2958** |
+| 1 Jul 2025 (6 months in) | `1751328000` | 5950 | **5950** |
+| 1 Jan 2026 (end) | `1767225600` | 12000 | **12000** |
+
+The cliff does not change the rate or the total — it only withholds the first
+90 days of accrual and releases it all at once when `now` reaches `cliff_time`.
+From the cliff onward, the schedule is identical to a no-cliff stream of the
+same parameters.
+
 ### Worked example: `cancel` with a cliff
 
 When a stream has a cliff, the vested amount before the cliff is **zero**,
@@ -186,92 +269,117 @@ example: whatever has accrued is split between the two parties. At
 In all cases, cancellation permanently freezes the stream. No further
 vesting occurs after the call.
 
-## Interpreting contract errors
+### Fully withdrawn stream: what each view reports
 
-When a call is rejected, the host does not report the variant name. It reports
-a numeric contract error, which the Stellar CLI and RPC responses print as
-`Error(Contract, #N)`. For example, a `withdraw_amount` that asks for more than
-the available balance fails with:
+A stream that has been drawn down completely — every token taken out by the
+recipient — still exists in storage and answers every view. This is the
+expected end state for a healthy stream that ran to completion.
 
-```text
-HostError: Error(Contract, #8)
+Using the no-cliff reference stream — 1000 units, `start_time = 100`,
+`end_time = 1100` — at `now = 1100` (the end), after the recipient has called
+`withdraw` and received all 1000 units:
+
+| View | Return value | Reason |
+| ---- | ------------ | ------ |
+| `get_stream` | stream record with `withdrawn = 1000`, `cancelled = false` | the record is never deleted |
+| `withdrawable(id)` | `0` | `vested(1000) - withdrawn(1000) = 0` |
+| `vested(id)` | `1000` | at or after `end_time`, the full amount has vested |
+| `locked(id)` | `0` | `total_amount(1000) - vested(1000) = 0` |
+| `progress(id)` | `10000` | 100 % — fully vested |
+| `status(id)` | `Completed` | `now >= end_time` and the stream was not cancelled |
+
+Calling `withdraw` again after the balance is zero returns
+`Err(NothingToWithdraw)` — nothing is transferred and nothing is recorded.
+
+**How to tell a finished stream from a broken one.** A normally completed
+stream has `status = Completed`, `locked = 0`, `progress = 10000`, and
+`withdrawable = 0`. An incomplete or misconfigured stream would show a
+non-zero `withdrawable` or `locked` alongside the same `Completed` status,
+which means tokens remain unclaimed. The `get_stream` view exposes the raw
+`withdrawn` and `total_amount` fields for a precise accounting check:
+`withdrawn == total_amount` confirms the recipient has taken everything.
+
+## Reading the contract interface
+
+The contract's public interface — every entry point name, its parameter names
+and types, and its return type — can be printed directly from a compiled WASM
+artifact without reading the Rust source. This is the canonical way for a
+client author to discover the exact call signatures, and it is useful any time
+you want to confirm that a deployed binary exposes the interface you expect.
+
+### When to regenerate
+
+- **Before integrating:** read the interface from the artifact you are about to
+  deploy so your client code matches the real signatures, not a stale copy.
+- **After a code change:** regenerate to confirm that your change added,
+  removed, or renamed an entry point as intended.
+- **When auditing a deployment:** read the interface from the on-chain WASM to
+  check what the live contract actually exposes.
+
+### From a local build
+
+Build the optimised artifact first (the toolchain is pinned in
+`rust-toolchain.toml`):
+
+```bash
+cargo build --release --target wasm32v1-none
 ```
 
-`N` is the `u32` discriminant of a `StreamError` variant in
-[`error.rs`](contracts/stream/src/error.rs). The codes are stable across builds,
-so callers and indexers can match on the number directly:
+Then print the interface with the Stellar CLI:
 
-| Code | Variant                  | Returned by                                    | Meaning                                                                          |
-| ---- | ------------------------ | ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| 1    | `StreamNotFound`         | every entry point that takes an `id`           | no stream exists with that id                                                    |
-| 3    | `InvalidTimeRange`       | `create_stream`                                | `start_time` is not strictly before `end_time`                                   |
-| 4    | `InvalidAmount`          | `create_stream`, `withdraw_amount`             | the amount is zero or negative                                                   |
-| 5    | `InvalidCliff`           | `create_stream`                                | `cliff_time` is outside `[start_time, end_time]`                                 |
-| 6    | `AlreadyCancelled`       | `cancel`                                       | the stream has already been cancelled                                            |
-| 7    | `NothingToWithdraw`      | `withdraw`                                     | nothing is withdrawable right now                                                |
-| 8    | `InsufficientBalance`    | `withdraw_amount`                              | the requested amount exceeds the withdrawable balance                            |
-| 9    | `StreamAlreadyCompleted` | `cancel`                                       | `now >= end_time`, so there is nothing unvested to refund                        |
-| 10   | `AmountTooLarge`         | `create_stream`                                | `total_amount` exceeds `MAX_AMOUNT` (`i64::MAX`)                                 |
-| 11   | `StreamWindowInPast`     | `create_stream`                                | `end_time` is not in the future                                                  |
-| 12   | `StreamCountExhausted`   | `create_stream`                                | the id counter has reached `u64::MAX`                                            |
-| 13   | `InvalidParticipant`     | `create_stream`                                | sender equals recipient, or the contract or token address is used as a participant |
+```bash
+stellar contract inspect \
+  --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
+```
 
-Code 2 is not in use. It belonged to a retired `Unauthorized` variant and will
-not be reassigned, so the gap is intentional.
+The command reads the custom section that the Soroban SDK embeds in every WASM
+at compile time and prints each entry point in an XDR-derived text format.
+Output looks like:
 
-Authorization failures never appear as a contract error. Access control uses
-`require_auth()`, which aborts the call with a host auth error
-(`Error(Auth, ...)`) instead of returning a `StreamError`. If you see an `Auth`
-error rather than a `Contract` one, the call was not signed by the address the
-entry point requires, and none of the codes above apply. Entry points that take
-an `id` look the stream up before checking authorization, so an unknown id
-reports `StreamNotFound` (1) even when the call is also unsigned.
+```text
+fn create_stream(sender: address, recipient: address, token: address,
+    total_amount: i128, start_time: u64, end_time: u64, cliff_time: u64)
+    -> result<u64, error<contract>>
+fn withdraw(id: u64) -> result<i128, error<contract>>
+fn withdraw_amount(id: u64, amount: i128) -> result<i128, error<contract>>
+fn cancel(id: u64) -> result<i128, error<contract>>
+fn get_stream(id: u64) -> result<stream, error<contract>>
+fn withdrawable(id: u64) -> result<i128, error<contract>>
+fn vested(id: u64) -> result<i128, error<contract>>
+fn locked(id: u64) -> result<i128, error<contract>>
+fn progress(id: u64) -> result<u32, error<contract>>
+fn status(id: u64) -> result<stream_status, error<contract>>
+fn stream_count() -> u64
+```
 
-When `create_stream` has several invalid arguments at once, it reports only the
-first failing check, in the order documented on `create_stream` in
-[`contract.rs`](contracts/stream/src/contract.rs): participants, then amount,
-then schedule, then capacity.
+### From a deployed contract
 
-## Storage lifetime
+Fetch the WASM from the network and inspect it in one step:
 
-Soroban storage entries expire unless their time to live (TTL) is extended.
-Once an entry's TTL runs out the network archives it, and it must be restored
-off-contract before any call can read it again. The contract sets two
-constants in [`storage.rs`](contracts/stream/src/storage.rs) that decide how
-long a stream survives without interaction:
+```bash
+# Replace <CONTRACT_ID> with the deployed bech32 contract address and
+# <NETWORK> with "testnet", "mainnet", or a custom RPC URL.
+stellar contract fetch \
+  --id <CONTRACT_ID> \
+  --network <NETWORK> \
+  --out-file fetched.wasm
 
-| Constant         | Ledgers   | Approx. time at 5 s/ledger | Role                                                    |
-| ---------------- | --------- | -------------------------- | ------------------------------------------------------- |
-| `ENTRY_TTL`      | `518_400` | 30 days                    | the lifetime an entry is extended to                    |
-| `BUMP_THRESHOLD` | `103_680` | 6 days                     | extend only when fewer than this many ledgers remain    |
+stellar contract inspect --wasm fetched.wasm
+```
 
-`ENTRY_TTL` is thirty days expressed in ledgers
-(`30 * 86_400 / 5 = 518_400`), long enough to cover a monthly payroll or
-subscription cycle. `BUMP_THRESHOLD` is one fifth of that. An access with more
-than six days left does not extend the entry, which saves the fee of
-re-extending on every call. An access with less than six days left resets the
-entry to the full thirty days.
+Or pass `--id` directly to `inspect` if you only need the interface and do not
+want to keep the WASM file locally:
 
-What this means in practice:
+```bash
+stellar contract inspect \
+  --id <CONTRACT_ID> \
+  --network <NETWORK>
+```
 
-- **Stream records** (`Stream(id)`, persistent storage) are extended whenever
-  any entry point reads or writes them, including the read-only views such as
-  `withdrawable`, `vested`, and `get_stream`. A stream stays live as long as
-  something touches it at least once every ~30 days. The extension only
-  persists when the call is submitted as a transaction. A simulated read (the
-  default for view calls from the CLI or RPC `simulateTransaction`) changes
-  nothing on the ledger and does not keep the stream alive.
-- **The instance entry** (`StreamCount`, the id counter) is extended only by
-  `create_stream`. Reads do not extend it, so a contract that is only queried
-  and never receives a new stream will run its instance down after ~30 days.
-- **The durations are approximate.** They assume the nominal five second
-  ledger close time. Slower ledgers make the wall-clock lifetime longer and
-  faster ones make it shorter, so do not plan around the exact figure.
+The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli).
+The pinned toolchain in `rust-toolchain.toml` ensures the local artifact
+matches the one used during deployment when built on the same platform.
 
-If a stream may sit idle for longer than thirty days, for example a long
-cliff with no withdrawals, have an off-chain job call one of the views
-periodically, or extend the entry's TTL directly with the Stellar CLI
-(`stellar contract extend`).
 ## Verifying a deployment
 
 Anyone can confirm that a live contract was built from this source by comparing
