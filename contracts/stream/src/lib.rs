@@ -50,7 +50,7 @@ mod types;
 pub mod vesting;
 
 #[cfg(test)]
-mod test;
+mod tests;
 
 pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT};
 pub use error::StreamError;
