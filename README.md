@@ -299,6 +299,41 @@ which means tokens remain unclaimed. The `get_stream` view exposes the raw
 `withdrawn` and `total_amount` fields for a precise accounting check:
 `withdrawn == total_amount` confirms the recipient has taken everything.
 
+## Development workflow
+
+All common contributor tasks are wrapped in the `Makefile`. Run `make` (or
+`make help`) from the repository root to list them:
+
+```
+  check      Run fmt-check, lint, and test — the same sequence CI runs.
+             Use this before opening a pull request.
+  build      Native debug build (cargo build).
+  wasm       Optimised WASM artifact for deployment.
+  test       Run the full test suite (cargo test).
+  fmt        Format the workspace in place (cargo fmt).
+  fmt-check  Verify formatting without modifying files (used in CI).
+  lint       Lint every target and treat warnings as errors (cargo clippy -D warnings).
+  audit      Audit dependencies for known vulnerabilities (cargo audit --deny warnings).
+  clean      Remove build artifacts (cargo clean).
+  deploy     Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
+```
+
+Quick reference for the most common tasks:
+
+```bash
+make check          # formatting + lints + tests (mirrors CI)
+make test           # run the test suite only
+make fmt            # auto-format all Rust source files
+make wasm           # produce the release WASM ready for deployment
+make audit          # check for vulnerable or unmaintained dependencies
+make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
+```
+
+> **Dependency audit:** `make audit` runs `cargo audit --deny warnings`.
+> Some transitive Soroban test-host dependencies are allowlisted in
+> `.cargo/audit.toml` because they are not compiled into the deployed WASM.
+> See [`.cargo/AUDIT.md`](.cargo/AUDIT.md) for the full explanation.
+
 ## Reading the contract interface
 
 The contract's public interface — every entry point name, its parameter names
