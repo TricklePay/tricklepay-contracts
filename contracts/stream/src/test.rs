@@ -176,6 +176,24 @@ impl<'a> StreamTest<'a> {
         assert_eq!(latest_body.topics, expected_body.topics);
     }
 
+    /// Assert the latest invocation did not publish a stream event with the
+    /// given topic list.
+    pub fn assert_no_stream_event_topics(&self, unexpected: xdr::ContractEvent) {
+        let all_events = self.env.events().all();
+        let xdr::ContractEventBody::V0(unexpected_body) = &unexpected.body;
+
+        for event in all_events.events() {
+            let xdr::ContractEventBody::V0(event_body) = &event.body;
+            assert!(
+                !(&event.ext == &unexpected.ext
+                    && &event.contract_id == &unexpected.contract_id
+                    && &event.type_ == &unexpected.type_
+                    && event_body.topics == unexpected_body.topics),
+                "unexpected stream event topics were published"
+            );
+        }
+    }
+
     /// Whether a persistent entry exists under `key`, read straight out of the
     /// contract's storage rather than through an entry point. Entry points
     /// answer `StreamNotFound` for both "no such key" and "key holds
@@ -2085,6 +2103,14 @@ fn rejected_withdraw_publishes_no_events() {
         Err(Ok(StreamError::NothingToWithdraw))
     );
 
+    t.assert_no_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount: 0,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
     assert_eq!(t.event_publishers(), vec![&t.env]);
 }
 
