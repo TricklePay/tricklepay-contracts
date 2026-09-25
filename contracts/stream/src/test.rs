@@ -185,9 +185,9 @@ impl<'a> StreamTest<'a> {
         for event in all_events.events() {
             let xdr::ContractEventBody::V0(event_body) = &event.body;
             assert!(
-                !(&event.ext == &unexpected.ext
-                    && &event.contract_id == &unexpected.contract_id
-                    && &event.type_ == &unexpected.type_
+                !(event.ext == unexpected.ext
+                    && event.contract_id == unexpected.contract_id
+                    && event.type_ == unexpected.type_
                     && event_body.topics == unexpected_body.topics),
                 "unexpected stream event topics were published"
             );
