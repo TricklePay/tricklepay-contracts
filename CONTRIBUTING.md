@@ -43,6 +43,8 @@ cargo test
 cargo audit --deny warnings
 ```
 
+> **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
+
 CI runs the same checks on every push and pull request. The audit command uses the
 allowlist in `.cargo/audit.toml`; see the
 [Testing section of the README](README.md#testing) for what is ignored and why.
