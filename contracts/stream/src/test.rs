@@ -3407,3 +3407,17 @@ fn test_cliff_at_end_of_stream() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
     assert_eq!(t.contract.get_stream(&id).withdrawn, 1_000);
 }
+
+#[test]
+fn test_get_stream_not_found_beyond_counter() {
+    let t = StreamTest::setup(1_000);
+    
+    // Create one stream, meaning the counter is at 1.
+    t.open_default_stream(1_000);
+    assert_eq!(t.contract.stream_count(), 1);
+
+    // Try to get a stream ID beyond the counter.
+    // The current count is 1, so the next ID is 2, but we'll ask for 99.
+    let error = t.contract.try_get_stream(&99).unwrap_err().unwrap();
+    assert_eq!(error, StreamError::StreamNotFound);
+}

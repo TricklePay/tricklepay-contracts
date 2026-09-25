@@ -45,8 +45,11 @@ audit: ## Audit dependencies for known vulnerabilities.
 clean: ## Remove build artifacts.
 	cargo clean
 
-deploy: ## Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
-	./scripts/deploy.sh $(ID)
+deploy: ## Build, install, and deploy to testnet. Pass an identity: make deploy IDENTITY=alice
+ifndef IDENTITY
+	$(error IDENTITY is undefined. Please provide an identity argument (e.g. make deploy IDENTITY=alice))
+endif
+	./scripts/deploy.sh $(IDENTITY)
 
 help: ## Show this help message.
 	@echo "Usage: make <target>"
