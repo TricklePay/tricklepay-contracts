@@ -42,10 +42,8 @@ impl StreamContract {
     /// artefact of how the checks happen to be ordered in the body:
     ///
     /// 1. **Authorization** — `sender` must authorize the call.
-    /// 2. **Participants** — [`StreamError::InvalidParticipant`] if `sender`
-    ///    equals `recipient`, or if `token` equals `sender` or `recipient`,
-    ///    or if any of `sender`, `recipient`, or `token` is this contract's
-    ///    own address.
+    /// 2. **Participants** — [`StreamError::InvalidParticipant`] if any of
+    ///    `sender`, `recipient`, or `token` is this contract's own address.
     /// 3. **Amount** — [`StreamError::InvalidAmount`] if `total_amount` is not
     ///    positive, then [`StreamError::AmountTooLarge`] if it exceeds
     ///    [`MAX_AMOUNT`].
@@ -92,18 +90,6 @@ impl StreamContract {
         // 1. Participants. Identity is the most fundamental precondition and
         //    these are pure comparisons, so they run first.
         //
-        //    A stream from an address to itself has no effect other than
-        //    locking the sender's own tokens and handing them back over time.
-        //    It is almost always a mistake — a swapped argument or an unset
-        //    field — so it is refused rather than silently accepted.
-        if sender == recipient {
-            return Err(StreamError::InvalidParticipant);
-        }
-        //    A token contract cannot act as a stream participant, and attempting
-        //    to stream a token to or from its own address is refused.
-        if token == sender || token == recipient {
-            return Err(StreamError::InvalidParticipant);
-        }
         //    This contract's own address is not valid in any role. Each case
         //    fails differently — an unclaimable recipient, a token with no
         //    `transfer` entry point, a sender drawing on the holdings that

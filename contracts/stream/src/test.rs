@@ -1782,60 +1782,6 @@ fn create_stream_rejects_the_contract_as_token() {
     t.assert_nothing_happened(1_000);
 }
 
-/// A token contract cannot also act as a stream participant. Using the sender or
-/// recipient address as the token input creates a nonsensical stream that is
-/// rejected before any fund transfer.
-#[test]
-fn create_stream_rejects_token_equal_to_sender_or_recipient() {
-    let t = StreamTest::setup(1_000);
-    t.set_time(100);
-
-    let result = t.contract.try_create_stream(
-        &t.sender,
-        &t.recipient,
-        &t.sender,
-        &1_000,
-        &100,
-        &1_100,
-        &100,
-    );
-    assert_eq!(result, Err(Ok(StreamError::InvalidParticipant)));
-    t.assert_nothing_happened(1_000);
-
-    let result = t.contract.try_create_stream(
-        &t.sender,
-        &t.recipient,
-        &t.recipient,
-        &1_000,
-        &100,
-        &1_100,
-        &100,
-    );
-    assert_eq!(result, Err(Ok(StreamError::InvalidParticipant)));
-    t.assert_nothing_happened(1_000);
-}
-
-/// A stream from an address to itself only locks the sender's own tokens and
-/// hands them back over time. It is almost always a swapped or unset argument,
-/// so it is refused before any tokens move.
-#[test]
-fn create_stream_rejects_a_stream_to_self() {
-    let t = StreamTest::setup(1_000);
-    t.set_time(100);
-
-    let result = t.contract.try_create_stream(
-        &t.sender,
-        &t.sender,
-        &t.token_address,
-        &1_000,
-        &100,
-        &1_100,
-        &100,
-    );
-    assert_eq!(result, Err(Ok(StreamError::InvalidParticipant)));
-    t.assert_nothing_happened(1_000);
-}
-
 /// When an argument list breaks more than one rule, which error comes back is
 /// fixed by the documented order on `create_stream` rather than by the
 /// incidental arrangement of the checks. Each case below violates two rules
@@ -1845,11 +1791,11 @@ fn create_stream_validation_order_is_deterministic() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
 
-    // Participants (2) beat amount (3): self-stream with a zero amount.
+    // Participants (2) beat amount (3): stream to the contract with a zero amount.
     assert_eq!(
         t.contract.try_create_stream(
             &t.sender,
-            &t.sender,
+            &t.contract.address,
             &t.token_address,
             &0,
             &100,
@@ -2153,9 +2099,9 @@ fn cancelled_event_topics_index_sender() {
 fn rejected_create_publishes_no_events() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
-    // sender == recipient is refused by the first validation step.
+    // This contract's own address is refused by the first validation step.
     let sender = t.sender.clone();
-    assert!(t.try_create_stream_for_raw(&sender, &sender, &t.token_address, 1_000));
+    assert!(t.try_create_stream_for_raw(&sender, &t.contract.address, &t.token_address, 1_000));
 
     assert_eq!(t.event_publishers(), vec![&t.env]);
     t.assert_nothing_happened(1_000);
@@ -3411,7 +3357,7 @@ fn test_cliff_at_end_of_stream() {
 #[test]
 fn test_get_stream_not_found_beyond_counter() {
     let t = StreamTest::setup(1_000);
-    
+
     // Create one stream, meaning the counter is at 1.
     t.open_default_stream(1_000);
     assert_eq!(t.contract.stream_count(), 1);

@@ -555,6 +555,15 @@ A few common edge cases are worth keeping explicit:
   the cancellation instant, and the sender receives only the remaining unvested
   balance.
 
+### Deliberately omitted validations
+
+The contract deliberately does not validate some inputs that might look questionable, to ensure it does not break legitimate use cases:
+
+- **Sender and recipient being the same address:** A stream from an address to itself has the effect of locking the sender's own tokens and handing them back over time. This is a legitimate way to enforce a personal vesting schedule or lockup, so it is accepted rather than rejected.
+- **Token acting as a participant:** A token contract acting as the `sender` or `recipient` is permitted. Rejecting this could break legitimate smart contract composability.
+- **Start time in the past:** Accepted as long as `end_time` is in the future. The elapsed portion vests immediately, which is useful for backdating streams.
+
+
 ### Integer rounding
 
 Vested amounts are computed as:
