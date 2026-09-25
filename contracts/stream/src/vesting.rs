@@ -75,6 +75,35 @@ pub fn withdrawable_amount(vested: i128, withdrawn: i128) -> i128 {
     }
 }
 
+/// How a cancelled stream's escrow is divided between the two parties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Settlement {
+    /// Unvested remainder returned to the sender.
+    pub refund: i128,
+    /// Vested amount the recipient has not yet withdrawn.
+    pub recipient_remaining: i128,
+}
+
+/// Split a stream's escrow at cancellation, given what has vested and what the
+/// recipient has already withdrawn.
+///
+/// # Examples
+///
+/// ```
+/// use tricklepay_stream::vesting::{settlement, Settlement};
+///
+/// assert_eq!(
+///     settlement(1000, 400, 150),
+///     Settlement { refund: 600, recipient_remaining: 250 }
+/// );
+/// ```
+pub fn settlement(total_amount: i128, vested: i128, withdrawn: i128) -> Settlement {
+    Settlement {
+        refund: total_amount - vested,
+        recipient_remaining: vested - withdrawn,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +218,27 @@ mod tests {
     #[test]
     fn withdrawable_is_zero_when_fully_taken() {
         assert_eq!(withdrawable_amount(300, 300), 0);
+    }
+
+    #[test]
+    fn settlement_splits_unvested_and_unwithdrawn() {
+        let s = settlement(TOTAL, 500, 200);
+        assert_eq!(s.refund, 500);
+        assert_eq!(s.recipient_remaining, 300);
+    }
+
+    #[test]
+    fn settlement_before_anything_vests_refunds_everything() {
+        let s = settlement(TOTAL, 0, 0);
+        assert_eq!(s.refund, TOTAL);
+        assert_eq!(s.recipient_remaining, 0);
+    }
+
+    #[test]
+    fn settlement_after_full_withdrawal_leaves_recipient_nothing() {
+        let s = settlement(TOTAL, 750, 750);
+        assert_eq!(s.refund, 250);
+        assert_eq!(s.recipient_remaining, 0);
     }
 }
 

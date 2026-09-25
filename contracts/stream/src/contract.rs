@@ -18,6 +18,9 @@ use crate::vesting;
 ///   `i64::MAX as i128 * u64::MAX as i128 < i128::MAX`
 pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
+/// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
+pub const BPS_SCALE: u32 = 10_000;
+
 #[contract]
 pub struct StreamContract;
 
@@ -145,11 +148,7 @@ impl StreamContract {
 
         // 5. Effects. Every rejection above returns before this point, so a
         //    failed creation never moves tokens or touches storage.
-        TokenClient::new(&env, &token).transfer(
-            &sender,
-            env.current_contract_address(),
-            &total_amount,
-        );
+        transfer(&env, &token, &sender, &this, total_amount);
 
         let stream = Stream {
             sender: sender.clone(),
@@ -193,39 +192,12 @@ impl StreamContract {
     /// let amount_withdrawn = client.withdraw(&stream_id);
     /// ```
     pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
-        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        stream.recipient.require_auth();
-
-        let now = env.ledger().timestamp();
-        let vested = vesting::vested_amount(
-            stream.total_amount,
-            stream.start_time,
-            stream.end_time,
-            stream.cliff_time,
-            now,
-        );
-        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
-        if available <= 0 {
-            return Err(StreamError::NothingToWithdraw);
-        }
-
-        stream.withdrawn += available;
-        storage::set_stream(&env, id, &stream);
-
-        TokenClient::new(&env, &stream.token).transfer(
-            &env.current_contract_address(),
-            &stream.recipient,
-            &available,
-        );
-
-        events::Withdrawn {
-            recipient: stream.recipient.clone(),
-            id,
-            amount: available,
-        }
-        .publish(&env);
-
-        Ok(available)
+        withdraw_with(&env, id, |available| {
+            if available <= 0 {
+                return Err(StreamError::NothingToWithdraw);
+            }
+            Ok(available)
+        })
     }
 
     /// Withdraw a specific amount, up to what has vested.
@@ -242,43 +214,15 @@ impl StreamContract {
     /// let amount_withdrawn = client.withdraw_amount(&stream_id, &250_000_000);
     /// ```
     pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
-        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        stream.recipient.require_auth();
-
-        if amount <= 0 {
-            return Err(StreamError::InvalidAmount);
-        }
-
-        let now = env.ledger().timestamp();
-        let vested = vesting::vested_amount(
-            stream.total_amount,
-            stream.start_time,
-            stream.end_time,
-            stream.cliff_time,
-            now,
-        );
-        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
-        if amount > available {
-            return Err(StreamError::InsufficientBalance);
-        }
-
-        stream.withdrawn += amount;
-        storage::set_stream(&env, id, &stream);
-
-        TokenClient::new(&env, &stream.token).transfer(
-            &env.current_contract_address(),
-            &stream.recipient,
-            &amount,
-        );
-
-        events::Withdrawn {
-            recipient: stream.recipient.clone(),
-            id,
-            amount,
-        }
-        .publish(&env);
-
-        Ok(amount)
+        withdraw_with(&env, id, |available| {
+            if amount <= 0 {
+                return Err(StreamError::InvalidAmount);
+            }
+            if amount > available {
+                return Err(StreamError::InsufficientBalance);
+            }
+            Ok(amount)
+        })
     }
 
     /// Cancel a stream and refund the unvested remainder to the sender.
@@ -313,8 +257,7 @@ impl StreamContract {
             stream.cliff_time,
             now,
         );
-        let refund = stream.total_amount - vested;
-        let recipient_remaining = vested - stream.withdrawn;
+        let settlement = vesting::settlement(stream.total_amount, vested, stream.withdrawn);
 
         // Freeze the stream at the vested amount. With the total reduced to
         // what has vested and the window closed at `now`, no further tokens
@@ -326,23 +269,25 @@ impl StreamContract {
         stream.cancelled = true;
         storage::set_stream(&env, id, &stream);
 
-        if refund > 0 {
-            TokenClient::new(&env, &stream.token).transfer(
+        if settlement.refund > 0 {
+            transfer(
+                &env,
+                &stream.token,
                 &env.current_contract_address(),
                 &stream.sender,
-                &refund,
+                settlement.refund,
             );
         }
 
         events::Cancelled {
             sender: stream.sender.clone(),
             id,
-            recipient_amount: recipient_remaining,
-            sender_refund: refund,
+            recipient_amount: settlement.recipient_remaining,
+            sender_refund: settlement.refund,
         }
         .publish(&env);
 
-        Ok(refund)
+        Ok(settlement.refund)
     }
 
     /// Fetch a stream by id.
@@ -448,7 +393,7 @@ impl StreamContract {
     pub fn progress(env: Env, id: u64) -> Result<u32, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         if stream.total_amount == 0 {
-            return Ok(10_000);
+            return Ok(BPS_SCALE);
         }
         let vested = vesting::vested_amount(
             stream.total_amount,
@@ -457,8 +402,9 @@ impl StreamContract {
             stream.cliff_time,
             env.ledger().timestamp(),
         );
-        let progress = vested * 10_000 / stream.total_amount;
-        Ok(u32::try_from(progress.clamp(0, 10_000)).unwrap_or(0))
+        let scale = i128::from(BPS_SCALE);
+        let progress = vested * scale / stream.total_amount;
+        Ok(u32::try_from(progress.clamp(0, scale)).unwrap_or(0))
     }
 
     /// Lifecycle status of a stream at the current ledger time.
@@ -508,4 +454,50 @@ impl StreamContract {
     pub fn stream_count(env: Env) -> u64 {
         storage::stream_count(&env)
     }
+}
+
+/// Shared body of [`StreamContract::withdraw`] and
+/// [`StreamContract::withdraw_amount`]. `select` receives the withdrawable
+/// balance and returns the amount to send, or the error to reject with.
+fn withdraw_with(
+    env: &Env,
+    id: u64,
+    select: impl FnOnce(i128) -> Result<i128, StreamError>,
+) -> Result<i128, StreamError> {
+    let mut stream = storage::get_stream(env, id).ok_or(StreamError::StreamNotFound)?;
+    stream.recipient.require_auth();
+
+    let vested = vesting::vested_amount(
+        stream.total_amount,
+        stream.start_time,
+        stream.end_time,
+        stream.cliff_time,
+        env.ledger().timestamp(),
+    );
+    let amount = select(vesting::withdrawable_amount(vested, stream.withdrawn))?;
+
+    stream.withdrawn += amount;
+    storage::set_stream(env, id, &stream);
+
+    transfer(
+        env,
+        &stream.token,
+        &env.current_contract_address(),
+        &stream.recipient,
+        amount,
+    );
+
+    events::Withdrawn {
+        recipient: stream.recipient.clone(),
+        id,
+        amount,
+    }
+    .publish(env);
+
+    Ok(amount)
+}
+
+/// Move `amount` of `token` from `from` to `to`.
+fn transfer(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) {
+    TokenClient::new(env, token).transfer(from, to, &amount);
 }
