@@ -12,6 +12,18 @@ This repository holds the `stream` contract and its test suite. The indexer and
 web client that build on it live in separate repositories; see
 [Related repositories](#related-repositories).
 
+## Soroban SDK compatibility
+
+The contract targets Soroban SDK `25.0.0`, pinned in the workspace
+`Cargo.toml`. The same version is used for the contract build and its test
+host.
+
+Upgrading the SDK can change generated contract clients and macros, the WASM
+build, or host behavior exercised by tests. Review the SDK release notes,
+update the workspace pin, and run the full test and lint suite. Also rebuild
+and inspect the contract interface and WASM artifact before deployment, since
+SDK changes can affect the contract ABI or what the Soroban host accepts.
+
 ## How a stream works
 
 **All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
@@ -92,7 +104,7 @@ Without a cliff, `cliff_time == start_time == 100` (no cliff):
 With a cliff at the midpoint, `cliff_time == 600`:
 
 | Time | Vested | Locked | Description                                                                 |
-| ---- | ------ | ------ | ----------------------------------------------------------------------------- |
+| ---- | ------ | ------ | --------------------------------------------------------------------------- |
 | 300  | 0      | 1000   | past the start, but the cliff has not been reached; all 1000 remains locked |
 | 600  | 500    | 500    | the cliff releases everything accrued since the start, unlocking 500        |
 | 850  | 750    | 250    | vesting continues linearly from the cliff onward                            |
@@ -110,11 +122,12 @@ tokens, but `withdraw` always sweeps the full available balance while
 the rest streaming.
 
 Using the same no-cliff reference stream from [Example schedule](#example-schedule)
-- 1000 units, `start_time = 100`, `end_time = 1100` - at `now = 600` the
-midpoint has been reached, so 500 units have vested and none have been
-withdrawn yet:
 
-    withdrawable(id) == 500
+- 1000 units, `start_time = 100`, `end_time = 1100` - at `now = 600` the
+  midpoint has been reached, so 500 units have vested and none have been
+  withdrawn yet:
+
+      withdrawable(id) == 500
 
 The recipient draws only 200 of it:
 
@@ -163,6 +176,7 @@ can then claim the remaining 300 of their vested share:
 cancel(id)           -> 500   // sender refund (unvested only)
 withdraw(id)         -> 300   // recipient claims their remaining vested balance
 ```
+
 ### Worked example: vesting schedule with a cliff
 
 This example uses a one-year stream with a three-month cliff — the shape
@@ -171,12 +185,12 @@ step-change at the cliff is easy to see.
 
 **Parameters:**
 
-| Field | Value | Unix seconds |
-| ----- | ----- | ------------ |
-| `total_amount` | 12 000 units | — |
-| `start_time` | 1 Jan 2025 00:00 UTC | `1735689600` |
-| `cliff_time` | 1 Apr 2025 00:00 UTC | `1743465600` |
-| `end_time` | 1 Jan 2026 00:00 UTC | `1767225600` |
+| Field          | Value                | Unix seconds |
+| -------------- | -------------------- | ------------ |
+| `total_amount` | 12 000 units         | —            |
+| `start_time`   | 1 Jan 2025 00:00 UTC | `1735689600` |
+| `cliff_time`   | 1 Apr 2025 00:00 UTC | `1743465600` |
+| `end_time`     | 1 Jan 2026 00:00 UTC | `1767225600` |
 
 Duration = 365 days = 31 536 000 seconds.  
 Cliff offset from start = 90 days = 7 776 000 seconds.
@@ -196,7 +210,7 @@ create_stream(
 
 **Withdrawable amount at three points in time:**
 
-*Before the cliff — 1 Feb 2025 (`now = 1738368000`):*
+_Before the cliff — 1 Feb 2025 (`now = 1738368000`):_
 
 ```
 elapsed = 1738368000 - 1735689600 = 2678400 s  (31 days)
@@ -208,7 +222,7 @@ One month has passed since the start and 1/12 of the total has accrued by the
 linear schedule, but the cliff gate is still blocking it. Nothing can be
 withdrawn yet.
 
-*At the cliff — 1 Apr 2025 (`now = 1743465600`):*
+_At the cliff — 1 Apr 2025 (`now = 1743465600`):_
 
 ```
 elapsed = 1743465600 - 1735689600 = 7776000 s  (90 days)
@@ -220,7 +234,7 @@ The cliff releases the entire 90 days of accrual in one step. The recipient
 can withdraw up to 2958 units immediately, even though nothing was available
 one second earlier.
 
-*Six months in — 1 Jul 2025 (`now = 1751328000`):*
+_Six months in — 1 Jul 2025 (`now = 1751328000`):_
 
 ```
 elapsed = 1751328000 - 1735689600 = 15638400 s  (181 days)
@@ -234,12 +248,12 @@ Vesting has continued linearly from the cliff. If the recipient withdrew the
 
 **Summary table:**
 
-| Date | `now` | Vested | Withdrawable (nothing taken yet) |
-| ---- | ----- | ------ | -------------------------------- |
-| 1 Feb 2025 (1 month in, before cliff) | `1738368000` | 0 | **0** |
-| 1 Apr 2025 (cliff, 3 months in) | `1743465600` | 2958 | **2958** |
-| 1 Jul 2025 (6 months in) | `1751328000` | 5950 | **5950** |
-| 1 Jan 2026 (end) | `1767225600` | 12000 | **12000** |
+| Date                                  | `now`        | Vested | Withdrawable (nothing taken yet) |
+| ------------------------------------- | ------------ | ------ | -------------------------------- |
+| 1 Feb 2025 (1 month in, before cliff) | `1738368000` | 0      | **0**                            |
+| 1 Apr 2025 (cliff, 3 months in)       | `1743465600` | 2958   | **2958**                         |
+| 1 Jul 2025 (6 months in)              | `1751328000` | 5950   | **5950**                         |
+| 1 Jan 2026 (end)                      | `1767225600` | 12000  | **12000**                        |
 
 The cliff does not change the rate or the total — it only withholds the first
 90 days of accrual and releases it all at once when `now` reaches `cliff_time`.
@@ -279,14 +293,14 @@ Using the no-cliff reference stream — 1000 units, `start_time = 100`,
 `end_time = 1100` — at `now = 1100` (the end), after the recipient has called
 `withdraw` and received all 1000 units:
 
-| View | Return value | Reason |
-| ---- | ------------ | ------ |
-| `get_stream` | stream record with `withdrawn = 1000`, `cancelled = false` | the record is never deleted |
-| `withdrawable(id)` | `0` | `vested(1000) - withdrawn(1000) = 0` |
-| `vested(id)` | `1000` | at or after `end_time`, the full amount has vested |
-| `locked(id)` | `0` | `total_amount(1000) - vested(1000) = 0` |
-| `progress(id)` | `10000` | 100 % — fully vested |
-| `status(id)` | `Completed` | `now >= end_time` and the stream was not cancelled |
+| View               | Return value                                               | Reason                                             |
+| ------------------ | ---------------------------------------------------------- | -------------------------------------------------- |
+| `get_stream`       | stream record with `withdrawn = 1000`, `cancelled = false` | the record is never deleted                        |
+| `withdrawable(id)` | `0`                                                        | `vested(1000) - withdrawn(1000) = 0`               |
+| `vested(id)`       | `1000`                                                     | at or after `end_time`, the full amount has vested |
+| `locked(id)`       | `0`                                                        | `total_amount(1000) - vested(1000) = 0`            |
+| `progress(id)`     | `10000`                                                    | 100 % — fully vested                               |
+| `status(id)`       | `Completed`                                                | `now >= end_time` and the stream was not cancelled |
 
 Calling `withdraw` again after the balance is zero returns
 `Err(NothingToWithdraw)` — nothing is transferred and nothing is recorded.
@@ -311,24 +325,24 @@ declaration order, so reordering fields in any event struct is a breaking change
 for downstream consumers — treat it with the same care as renaming a field or
 changing its type.
 
-Each event has a set of *topics* (marked `#[topic]`) that the network indexes
-for efficient filtering, and a *data* payload containing the remaining fields.
+Each event has a set of _topics_ (marked `#[topic]`) that the network indexes
+for efficient filtering, and a _data_ payload containing the remaining fields.
 Topics appear first in the encoding; the data fields follow in declaration order.
 
 ### `Created`
 
 Emitted by `create_stream` when a new stream is opened successfully.
 
-| Field | Kind | Type | Description |
-|-------|------|------|-------------|
-| `sender` | topic | `Address` | The address that funded the stream |
-| `recipient` | topic | `Address` | The address that will receive the vested tokens |
-| `id` | data | `u64` | The id assigned to the new stream |
-| `token` | data | `Address` | The token contract address |
-| `total_amount` | data | `i128` | Total tokens locked into the stream |
-| `start_time` | data | `u64` | Unix timestamp (seconds) when vesting begins |
-| `end_time` | data | `u64` | Unix timestamp (seconds) when the stream is fully vested |
-| `cliff_time` | data | `u64` | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
+| Field          | Kind  | Type      | Description                                                                                                |
+| -------------- | ----- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| `sender`       | topic | `Address` | The address that funded the stream                                                                         |
+| `recipient`    | topic | `Address` | The address that will receive the vested tokens                                                            |
+| `id`           | data  | `u64`     | The id assigned to the new stream                                                                          |
+| `token`        | data  | `Address` | The token contract address                                                                                 |
+| `total_amount` | data  | `i128`    | Total tokens locked into the stream                                                                        |
+| `start_time`   | data  | `u64`     | Unix timestamp (seconds) when vesting begins                                                               |
+| `end_time`     | data  | `u64`     | Unix timestamp (seconds) when the stream is fully vested                                                   |
+| `cliff_time`   | data  | `u64`     | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
 
 Indexers can subscribe on the `sender` or `recipient` topics to receive all
 streams for a given address without scanning every event.
@@ -338,11 +352,11 @@ streams for a given address without scanning every event.
 Emitted by both `withdraw` and `withdraw_amount` when tokens are transferred to
 the recipient.
 
-| Field | Kind | Type | Description |
-|-------|------|------|-------------|
-| `recipient` | topic | `Address` | The address that received the tokens |
-| `id` | data | `u64` | The stream that was drawn from |
-| `amount` | data | `i128` | Number of tokens transferred in this call |
+| Field       | Kind  | Type      | Description                               |
+| ----------- | ----- | --------- | ----------------------------------------- |
+| `recipient` | topic | `Address` | The address that received the tokens      |
+| `id`        | data  | `u64`     | The stream that was drawn from            |
+| `amount`    | data  | `i128`    | Number of tokens transferred in this call |
 
 ### `Cancelled`
 
@@ -350,14 +364,14 @@ Emitted by `cancel` when a sender stops a stream early. Both sides of the split
 are included so an indexer can record the final state without a follow-up
 `get_stream` call.
 
-| Field | Kind | Type | Description |
-|-------|------|------|-------------|
-| `sender` | topic | `Address` | The address that cancelled the stream and received the refund |
-| `id` | data | `u64` | The stream that was cancelled |
-| `recipient_amount` | data | `i128` | Vested tokens still claimable by the recipient after cancellation |
-| `sender_refund` | data | `i128` | Unvested tokens immediately refunded to the sender |
+| Field              | Kind  | Type      | Description                                                       |
+| ------------------ | ----- | --------- | ----------------------------------------------------------------- |
+| `sender`           | topic | `Address` | The address that cancelled the stream and received the refund     |
+| `id`               | data  | `u64`     | The stream that was cancelled                                     |
+| `recipient_amount` | data  | `i128`    | Vested tokens still claimable by the recipient after cancellation |
+| `sender_refund`    | data  | `i128`    | Unvested tokens immediately refunded to the sender                |
 
-Note that `recipient_amount` reflects the *remaining claimable balance* at
+Note that `recipient_amount` reflects the _remaining claimable balance_ at
 cancellation time (vested minus already withdrawn), not the total that had
 vested. The sender refund covers only the unvested portion; tokens the recipient
 had already withdrawn are not returned.
@@ -562,6 +576,7 @@ Save that `C...` address. It is the `<CONTRACT_ID>` you pass to every later
 `stellar contract invoke` and to the verification steps in
 [Verifying a deployment](#verifying-a-deployment). The script exits non-zero,
 without deploying, if the build fails or the identity is unknown or unfunded.
+
 ### Step 2 — fetch the on-chain bytecode hash
 
 Every contract uploaded to a Stellar network is stored as a Wasm entry keyed
@@ -601,6 +616,7 @@ on a Linux host (or a Docker image with the pinned Rust toolchain) before
 concluding that the deployment differs from the source.
 
 ## Project structure
+
 A `cancel` call is rejected with `StreamAlreadyCompleted` if `now >= end_time`
 — once the stream has fully vested there is nothing unvested to refund. A
 stream that has already been cancelled cannot be cancelled again
@@ -674,12 +690,14 @@ ceiling is rejected with `AmountTooLarge` before any tokens move.
 | 1100 | 1000      | 1000.0      | 1000               |
 
 The schedule above divides evenly, so truncation has no visible effect. To see
-it, consider **10 units over 
+it, consider \*\*10 units over
 
 ## Recent Changes
+
 - Ongoing improvements and fixes as part of active development.
 - See commit history and open issues for detailed change tracking.
 
 ## Recent Changes
+
 - Ongoing improvements and fixes as part of active development.
 - See commit history and open issues for detailed change tracking.
