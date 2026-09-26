@@ -260,6 +260,9 @@ fn create_stream_locks_funds_and_assigns_id() {
     assert_eq!(stream.token, t.token_address);
     assert_eq!(stream.total_amount, 1_000);
     assert_eq!(stream.withdrawn, 0);
+    assert_eq!(stream.start_time, 100);
+    assert_eq!(stream.end_time, 1_100);
+    assert_eq!(stream.cliff_time, 100);
     assert!(!stream.cancelled);
 }
 
@@ -304,11 +307,17 @@ fn one_sender_can_stream_multiple_tokens_in_parallel() {
     let first = t.contract.get_stream(&first_id);
     assert_eq!(first.token, t.token_address);
     assert_eq!(first.total_amount, 400);
+    assert_eq!(first.start_time, 100);
+    assert_eq!(first.end_time, 1_100);
+    assert_eq!(first.cliff_time, 100);
     assert_eq!(first.withdrawn, 0);
 
     let second = t.contract.get_stream(&second_id);
     assert_eq!(second.token, second_token_address);
     assert_eq!(second.total_amount, 900);
+    assert_eq!(second.start_time, 100);
+    assert_eq!(second.end_time, 1_100);
+    assert_eq!(second.cliff_time, 100);
     assert_eq!(second.withdrawn, 0);
 
     t.set_time(600);
@@ -420,17 +429,26 @@ fn locked_decreases_as_the_stream_vests() {
         &1_000,
         &100,
         &1_100,
-        &100,
+        &600,
     );
 
-    // At the start the whole amount is locked.
+    // Before the cliff, nothing is vested and the whole amount is locked.
+    t.set_time(300);
     assert_eq!(t.contract.locked(&id), 1_000);
-    // Halfway, half is locked.
-    t.set_time(600);
-    assert_eq!(t.contract.locked(&id), 500);
-    // At the end, nothing is locked.
-    t.set_time(1_100);
+    assert_eq!(t.contract.vested(&id), 0);
+    assert_eq!(t.contract.locked(&id) + t.contract.vested(&id), 1_000);
+
+    // Mid-stream, vested and locked remain complementary.
+    t.set_time(850);
+    assert_eq!(t.contract.locked(&id), 250);
+    assert_eq!(t.contract.vested(&id), 750);
+    assert_eq!(t.contract.locked(&id) + t.contract.vested(&id), 1_000);
+
+    // After the end, all value is vested and none is locked.
+    t.set_time(1_200);
     assert_eq!(t.contract.locked(&id), 0);
+    assert_eq!(t.contract.vested(&id), 1_000);
+    assert_eq!(t.contract.locked(&id) + t.contract.vested(&id), 1_000);
 }
 
 #[test]
@@ -838,7 +856,10 @@ fn cancel_after_partial_withdrawal() {
     assert_eq!(t.contract.withdrawable(&id), 300);
     let remaining_withdrawal = t.contract.withdraw(&id);
     assert_eq!(remaining_withdrawal, 300);
-    assert_eq!(t.token.balance(&t.recipient), withdrawn + remaining_withdrawal);
+    assert_eq!(
+        t.token.balance(&t.recipient),
+        withdrawn + remaining_withdrawal
+    );
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
@@ -3416,7 +3437,7 @@ fn test_cliff_at_end_of_stream() {
 #[test]
 fn test_get_stream_not_found_beyond_counter() {
     let t = StreamTest::setup(1_000);
-    
+
     // Create one stream, meaning the counter is at 1.
     t.open_default_stream(1_000);
     assert_eq!(t.contract.stream_count(), 1);
