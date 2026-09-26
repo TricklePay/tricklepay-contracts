@@ -1,16 +1,48 @@
 //! Persistent storage keys and time-to-live management.
 //!
-//! This module owns the two storage entries the contract keeps: the instance
-//! entry `StreamCount`, which is the monotonic id counter, and the persistent
-//! `Stream(id)` entries, one per stream record. Both are granted `ENTRY_TTL`
-//! ledgers of lifetime and are extended back to that full window whenever they
-//! are touched with fewer than `BUMP_THRESHOLD` ledgers remaining, so an entry
-//! in frequent use does not pay to be re-extended on every access.
+//! # Overview
 //!
-//! Stream entries are bumped as a side effect of every read or write. The
-//! instance entry is bumped only by `create_stream` via [`extend_instance_ttl`];
-//! nothing extends it during a read, so a contract queried but never written
-//! to will run its instance down.
+//! This module is the single source of truth for every ledger entry the
+//! contract touches. All reads and writes go through the helpers here so that
+//! TTL management is handled in one place and entry points never call the SDK
+//! storage API directly.
+//!
+//! The contract keeps exactly two kinds of entry:
+//!
+//! | Key | Storage kind | Purpose |
+//! |-----|-------------|---------|
+//! | [`DataKey::StreamCount`] | Instance | Monotonic id counter |
+//! | [`DataKey::Stream`]`(id)` | Persistent | One full [`crate::types::Stream`] record |
+//!
+//! # Keys
+//!
+//! **`StreamCount`** lives in *instance* storage alongside the contract's
+//! WASM. It is a single `u64` whose current value is the id to assign to the
+//! next stream. Because instance storage is not bumped by read-only contract
+//! calls, it is extended explicitly inside `create_stream`; a contract that is
+//! only queried and never written to will run its instance down over time.
+//!
+//! **`Stream(id)`** entries live in *persistent* storage, one per stream,
+//! keyed by the numeric id. Each entry holds the full [`crate::types::Stream`]
+//! struct: participants, token, schedule, withdrawn amount, and cancelled flag.
+//! The entry is extended on every read or write, so any contact with a stream
+//! resets its countdown. Ids are never reused.
+//!
+//! # Lifetimes
+//!
+//! Both entry kinds share the same TTL constants:
+//!
+//! - [`ENTRY_TTL`] — `518_400` ledgers (≈ 30 days at a 5-second ledger close).
+//!   This is the target lifetime to which an entry is extended when bumped.
+//! - [`BUMP_THRESHOLD`] — `103_680` ledgers (≈ 6 days; one fifth of
+//!   `ENTRY_TTL`). An entry is only re-extended when its remaining TTL falls
+//!   below this mark, so a frequently accessed entry is not charged for a bump
+//!   on every call.
+//!
+//! A stream touched at least once per 24-day window will never approach
+//! archival. A stream that is abandoned for longer than `ENTRY_TTL` ledgers
+//! will be archived by the network; it must be restored off-chain before the
+//! contract can use it again.
 
 use soroban_sdk::{contracttype, Env};
 
