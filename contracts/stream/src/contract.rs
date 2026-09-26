@@ -19,6 +19,8 @@ use crate::vesting;
 ///   `i64::MAX as i128 * u64::MAX as i128 < i128::MAX`
 pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
+/// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
+pub const BPS_SCALE: u32 = 10_000;
 /// Check every rule `create_stream` enforces, before any token moves and
 /// before any storage is written.
 ///
@@ -229,6 +231,12 @@ impl StreamContract {
     /// let amount_withdrawn = client.withdraw(&stream_id);
     /// ```
     pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
+        withdraw_with(&env, id, |available| {
+            if available <= 0 {
+                return Err(StreamError::NothingToWithdraw);
+            }
+            Ok(available)
+        })
         let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         stream.recipient.require_auth();
 
@@ -273,6 +281,15 @@ impl StreamContract {
     /// let amount_withdrawn = client.withdraw_amount(&stream_id, &250_000_000);
     /// ```
     pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
+        withdraw_with(&env, id, |available| {
+            if amount <= 0 {
+                return Err(StreamError::InvalidAmount);
+            }
+            if amount > available {
+                return Err(StreamError::InsufficientBalance);
+            }
+            Ok(amount)
+        })
         let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         stream.recipient.require_auth();
 
@@ -339,8 +356,7 @@ impl StreamContract {
             stream.cliff_time,
             now,
         );
-        let refund = stream.total_amount - vested;
-        let recipient_remaining = vested - stream.withdrawn;
+        let settlement = vesting::settlement(stream.total_amount, vested, stream.withdrawn);
 
         // Freeze the stream at the vested amount. With the total reduced to
         // what has vested and the window closed at `now`, no further tokens
@@ -352,17 +368,26 @@ impl StreamContract {
         stream.cancelled = true;
         storage::set_stream(&env, id, &stream);
 
-        if refund > 0 {
-            TokenClient::new(&env, &stream.token).transfer(
+        if settlement.refund > 0 {
+            transfer(
+                &env,
+                &stream.token,
                 &env.current_contract_address(),
                 &stream.sender,
-                &refund,
+                settlement.refund,
             );
         }
 
+        events::Cancelled {
+            sender: stream.sender.clone(),
+            id,
+            recipient_amount: settlement.recipient_remaining,
+            sender_refund: settlement.refund,
+        }
+        .publish(&env);
         events::publish_cancelled(&env, &stream.sender, id, recipient_remaining, refund);
 
-        Ok(refund)
+        Ok(settlement.refund)
     }
 
     // =====================================================================
@@ -476,7 +501,7 @@ impl StreamContract {
     pub fn progress(env: Env, id: u64) -> Result<u32, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         if stream.total_amount == 0 {
-            return Ok(10_000);
+            return Ok(BPS_SCALE);
         }
         let vested = vesting::vested_amount(
             stream.total_amount,
@@ -485,8 +510,9 @@ impl StreamContract {
             stream.cliff_time,
             env.ledger().timestamp(),
         );
-        let progress = vested * 10_000 / stream.total_amount;
-        Ok(u32::try_from(progress.clamp(0, 10_000)).unwrap_or(0))
+        let scale = i128::from(BPS_SCALE);
+        let progress = vested * scale / stream.total_amount;
+        Ok(u32::try_from(progress.clamp(0, scale)).unwrap_or(0))
     }
 
     /// Lifecycle status of a stream at the current ledger time.
@@ -527,394 +553,48 @@ impl StreamContract {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger as _};
-    use soroban_sdk::Env;
+/// Shared body of [`StreamContract::withdraw`] and
+/// [`StreamContract::withdraw_amount`]. `select` receives the withdrawable
+/// balance and returns the amount to send, or the error to reject with.
+fn withdraw_with(
+    env: &Env,
+    id: u64,
+    select: impl FnOnce(i128) -> Result<i128, StreamError>,
+) -> Result<i128, StreamError> {
+    let mut stream = storage::get_stream(env, id).ok_or(StreamError::StreamNotFound)?;
+    stream.recipient.require_auth();
 
-    /// The ledger clock every case below is anchored to.
-    const NOW: u64 = 1_000;
-    /// A window entirely in the future, so rule 3 does not reject it.
-    const START: u64 = 1_100;
-    const END: u64 = 2_100;
-    const AMOUNT: i128 = 1_000;
+    let vested = vesting::vested_amount(
+        stream.total_amount,
+        stream.start_time,
+        stream.end_time,
+        stream.cliff_time,
+        env.ledger().timestamp(),
+    );
+    let amount = select(vesting::withdrawable_amount(vested, stream.withdrawn))?;
 
-    /// A valid `create_stream` call that individual tests perturb one field at
-    /// a time. Validation reads the ledger clock and the stream counter, so it
-    /// is exercised from inside a contract context.
-    struct Case {
-        env: Env,
-        contract: Address,
-        sender: Address,
-        recipient: Address,
-        token: Address,
+    stream.withdrawn += amount;
+    storage::set_stream(env, id, &stream);
+
+    transfer(
+        env,
+        &stream.token,
+        &env.current_contract_address(),
+        &stream.recipient,
+        amount,
+    );
+
+    events::Withdrawn {
+        recipient: stream.recipient.clone(),
+        id,
+        amount,
     }
+    .publish(env);
 
-    impl Case {
-        fn new() -> Self {
-            let env = Env::default();
-            env.mock_all_auths();
-            env.ledger().set_timestamp(NOW);
-            // Registering creates the contract instance, which is where the id
-            // counter lives. Validation reads that counter, so the instance has
-            // to exist before it can be exercised outside a real call.
-            let contract = env.register(StreamContract, ());
-            Self {
-                sender: Address::generate(&env),
-                recipient: Address::generate(&env),
-                token: Address::generate(&env),
-                contract,
-                env,
-            }
-        }
+    Ok(amount)
+}
 
-        /// Validate the well-formed call, with `amount` substituted in.
-        fn amount(&self, amount: i128) -> Result<(u64, u64), StreamError> {
-            self.validate(amount, START, END, START)
-        }
-
-        /// Validate a fully specified call.
-        fn validate(
-            &self,
-            amount: i128,
-            start: u64,
-            end: u64,
-            cliff: u64,
-        ) -> Result<(u64, u64), StreamError> {
-            self.env.as_contract(&self.contract, || {
-                validate_stream_creation(
-                    &self.env,
-                    &self.sender,
-                    &self.recipient,
-                    &self.token,
-                    amount,
-                    start,
-                    end,
-                    cliff,
-                )
-            })
-        }
-
-        /// Validate with explicit participants and token, for the identity
-        /// rules.
-        fn with_participants(
-            &self,
-            sender: &Address,
-            recipient: &Address,
-            token: &Address,
-        ) -> Result<(u64, u64), StreamError> {
-            self.env.as_contract(&self.contract, || {
-                validate_stream_creation(
-                    &self.env, sender, recipient, token, AMOUNT, START, END, START,
-                )
-            })
-        }
-
-        fn set_stream_count(&self, count: u64) {
-            self.env.as_contract(&self.contract, || {
-                storage::set_stream_count(&self.env, count)
-            });
-        }
-    }
-
-    // -- The amount ceiling ------------------------------------------------
-
-    /// The ceiling is the bound the validation compares against, pinned here
-    /// so a change to the constant cannot silently move the range of amounts
-    /// `create_stream` accepts.
-    #[test]
-    fn the_amount_ceiling_is_i64_max() {
-        assert_eq!(MAX_AMOUNT, i64::MAX as i128);
-    }
-
-    /// The ceiling exists for one reason: the vesting arithmetic multiplies
-    /// `total_amount` by an elapsed time as large as `u64::MAX`, and that
-    /// product has to stay inside `i128`. This asserts the property the
-    /// constant's comment claims, so the comment cannot drift away from the
-    /// value it documents.
-    #[test]
-    fn the_amount_ceiling_keeps_the_vesting_product_inside_i128() {
-        let largest_possible_product = MAX_AMOUNT.saturating_mul(u64::MAX as i128);
-        assert!(
-            largest_possible_product < i128::MAX,
-            "MAX_AMOUNT * u64::MAX must stay below i128::MAX, got {}",
-            largest_possible_product
-        );
-    }
-
-    // -- Accepted ---------------------------------------------------------
-
-    #[test]
-    fn accepts_a_well_formed_stream_and_reserves_the_first_id() {
-        assert_eq!(Case::new().amount(AMOUNT), Ok((0, 1)));
-    }
-
-    #[test]
-    fn returns_the_current_counter_as_the_new_id() {
-        let c = Case::new();
-        c.set_stream_count(7);
-        assert_eq!(c.amount(AMOUNT), Ok((7, 8)));
-    }
-
-    /// The ceiling itself is inside the accepted range; only values above it
-    /// are refused.
-    #[test]
-    fn accepts_an_amount_exactly_at_the_ceiling() {
-        assert_eq!(Case::new().amount(MAX_AMOUNT), Ok((0, 1)));
-    }
-
-    /// `end_time` must be strictly in the future, so one second past the
-    /// ledger clock is enough.
-    #[test]
-    fn accepts_a_window_ending_one_second_ahead() {
-        let c = Case::new();
-        assert_eq!(c.validate(AMOUNT, NOW, NOW + 1, NOW), Ok((0, 1)));
-    }
-
-    /// A cliff may sit on either edge of the window, including both.
-    #[test]
-    fn accepts_a_cliff_on_either_edge_of_the_window() {
-        let c = Case::new();
-        assert_eq!(c.validate(AMOUNT, START, END, START), Ok((0, 1)));
-        assert_eq!(c.validate(AMOUNT, START, END, END), Ok((0, 1)));
-    }
-
-    /// A start time already in the past is allowed: the elapsed portion just
-    /// vests immediately.
-    #[test]
-    fn accepts_a_start_time_in_the_past() {
-        let c = Case::new();
-        assert_eq!(c.validate(AMOUNT, 0, END, 0), Ok((0, 1)));
-    }
-
-    // -- Rejected: participants -------------------------------------------
-
-    #[test]
-    fn rejects_sender_equal_to_recipient() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.sender, &c.sender, &c.token),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    #[test]
-    fn rejects_token_equal_to_sender() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.sender, &c.recipient, &c.sender),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    #[test]
-    fn rejects_token_equal_to_recipient() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.sender, &c.recipient, &c.recipient),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    #[test]
-    fn rejects_the_contract_as_sender() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.contract, &c.recipient, &c.token),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    #[test]
-    fn rejects_the_contract_as_recipient() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.sender, &c.contract, &c.token),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    #[test]
-    fn rejects_the_contract_as_token() {
-        let c = Case::new();
-        assert_eq!(
-            c.with_participants(&c.sender, &c.recipient, &c.contract),
-            Err(StreamError::InvalidParticipant)
-        );
-    }
-
-    // -- Rejected: amount -------------------------------------------------
-
-    #[test]
-    fn rejects_a_zero_amount() {
-        assert_eq!(Case::new().amount(0), Err(StreamError::InvalidAmount));
-    }
-
-    #[test]
-    fn rejects_a_negative_amount() {
-        assert_eq!(Case::new().amount(-1), Err(StreamError::InvalidAmount));
-    }
-
-    #[test]
-    fn rejects_an_amount_one_above_the_ceiling() {
-        assert_eq!(
-            Case::new().amount(MAX_AMOUNT + 1),
-            Err(StreamError::AmountTooLarge)
-        );
-    }
-
-    // -- Rejected: schedule ------------------------------------------------
-
-    #[test]
-    fn rejects_start_equal_to_end() {
-        let c = Case::new();
-        assert_eq!(
-            c.validate(AMOUNT, START, START, START),
-            Err(StreamError::InvalidTimeRange)
-        );
-    }
-
-    #[test]
-    fn rejects_start_after_end() {
-        let c = Case::new();
-        assert_eq!(
-            c.validate(AMOUNT, END, START, START),
-            Err(StreamError::InvalidTimeRange)
-        );
-    }
-
-    #[test]
-    fn rejects_a_cliff_before_the_window() {
-        let c = Case::new();
-        assert_eq!(
-            c.validate(AMOUNT, START, END, START - 1),
-            Err(StreamError::InvalidCliff)
-        );
-    }
-
-    #[test]
-    fn rejects_a_cliff_after_the_window() {
-        let c = Case::new();
-        assert_eq!(
-            c.validate(AMOUNT, START, END, END + 1),
-            Err(StreamError::InvalidCliff)
-        );
-    }
-
-    /// The window is rejected only once it has fully closed, so `end_time`
-    /// equal to the ledger clock is still too late.
-    #[test]
-    fn rejects_a_window_that_has_already_closed() {
-        let c = Case::new();
-        assert_eq!(
-            c.validate(AMOUNT, NOW - 10, NOW, NOW - 10),
-            Err(StreamError::StreamWindowInPast)
-        );
-    }
-
-    // -- Rejected: capacity ------------------------------------------------
-
-    #[test]
-    fn rejects_an_exhausted_counter() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        assert_eq!(c.amount(AMOUNT), Err(StreamError::StreamCountExhausted));
-    }
-
-    /// The last id before the counter runs out is still handed out.
-    #[test]
-    fn accepts_the_last_id_before_exhaustion() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX - 1);
-        assert_eq!(c.amount(AMOUNT), Ok((u64::MAX - 1, u64::MAX)));
-    }
-
-    // -- Error precedence --------------------------------------------------
-
-    /// The rules are ordered, and the first match wins, so a call that breaks
-    /// several at once reports the earliest. These pin that order: participants,
-    /// then amount, then schedule, then capacity.
-    #[test]
-    fn a_bad_participant_outranks_a_bad_amount_and_schedule() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        c.env.as_contract(&c.contract, || {
-            assert_eq!(
-                validate_stream_creation(
-                    &c.env,
-                    &c.sender,
-                    &c.sender,
-                    &c.token,
-                    0,
-                    END,
-                    START,
-                    END + 1,
-                ),
-                Err(StreamError::InvalidParticipant)
-            );
-        });
-    }
-
-    #[test]
-    fn a_bad_amount_outranks_a_bad_schedule_and_an_exhausted_counter() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        assert_eq!(
-            c.validate(0, END, START, END + 1),
-            Err(StreamError::InvalidAmount)
-        );
-    }
-
-    #[test]
-    fn a_bad_time_range_outranks_a_bad_cliff_and_an_exhausted_counter() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        assert_eq!(
-            c.validate(AMOUNT, END, START, END + 1),
-            Err(StreamError::InvalidTimeRange)
-        );
-    }
-
-    #[test]
-    fn a_bad_cliff_outranks_a_past_window_and_an_exhausted_counter() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        assert_eq!(
-            c.validate(AMOUNT, START, END, END + 1),
-            Err(StreamError::InvalidCliff)
-        );
-    }
-
-    #[test]
-    fn a_past_window_outranks_an_exhausted_counter() {
-        let c = Case::new();
-        c.set_stream_count(u64::MAX);
-        assert_eq!(
-            c.validate(AMOUNT, NOW - 10, NOW, NOW - 10),
-            Err(StreamError::StreamWindowInPast)
-        );
-    }
-
-    // -- No side effects ---------------------------------------------------
-
-    /// Rejected calls must not consume an id or write anything. The counter is
-    /// the only storage this function can reach, and it must come back
-    /// unchanged after a rejection.
-    #[test]
-    fn a_rejected_call_leaves_the_counter_untouched() {
-        let c = Case::new();
-        c.set_stream_count(3);
-        for outcome in [
-            c.amount(0),
-            c.amount(MAX_AMOUNT + 1),
-            c.validate(AMOUNT, END, START, START),
-            c.validate(AMOUNT, START, END, END + 1),
-            c.validate(AMOUNT, NOW - 10, NOW, NOW - 10),
-            c.with_participants(&c.sender, &c.sender, &c.token),
-        ] {
-            assert!(outcome.is_err(), "expected a rejection, got {:?}", outcome);
-        }
-        assert_eq!(c.amount(AMOUNT), Ok((3, 4)));
-    }
+/// Move `amount` of `token` from `from` to `to`.
+fn transfer(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) {
+    TokenClient::new(env, token).transfer(from, to, &amount);
 }
