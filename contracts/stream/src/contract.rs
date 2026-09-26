@@ -198,9 +198,9 @@ impl StreamContract {
         );
 
         let stream = Stream {
-            sender: sender.clone(),
-            recipient: recipient.clone(),
-            token: token.clone(),
+            sender,
+            recipient,
+            token,
             total_amount,
             withdrawn: 0,
             start_time,
@@ -212,17 +212,7 @@ impl StreamContract {
         storage::set_stream_count(&env, next_id);
         storage::extend_instance_ttl(&env);
 
-        events::Created {
-            sender: sender.clone(),
-            recipient: recipient.clone(),
-            id,
-            token: token.clone(),
-            total_amount,
-            start_time,
-            end_time,
-            cliff_time,
-        }
-        .publish(&env);
+        events::publish_created(&env, id, &stream);
 
         Ok(id)
     }
@@ -264,12 +254,7 @@ impl StreamContract {
             &available,
         );
 
-        events::Withdrawn {
-            recipient: stream.recipient.clone(),
-            id,
-            amount: available,
-        }
-        .publish(&env);
+        events::publish_withdrawn(&env, &stream.recipient, id, available);
 
         Ok(available)
     }
@@ -317,12 +302,7 @@ impl StreamContract {
             &amount,
         );
 
-        events::Withdrawn {
-            recipient: stream.recipient.clone(),
-            id,
-            amount,
-        }
-        .publish(&env);
+        events::publish_withdrawn(&env, &stream.recipient, id, amount);
 
         Ok(amount)
     }
@@ -380,13 +360,7 @@ impl StreamContract {
             );
         }
 
-        events::Cancelled {
-            sender: stream.sender.clone(),
-            id,
-            recipient_amount: recipient_remaining,
-            sender_refund: refund,
-        }
-        .publish(&env);
+        events::publish_cancelled(&env, &stream.sender, id, recipient_remaining, refund);
 
         Ok(refund)
     }

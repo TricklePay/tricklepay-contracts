@@ -3447,3 +3447,74 @@ fn test_get_stream_not_found_beyond_counter() {
     let error = t.contract.try_get_stream(&99).unwrap_err().unwrap();
     assert_eq!(error, StreamError::StreamNotFound);
 }
+
+#[test]
+fn create_stream_moves_the_total_from_sender_to_contract() {
+    // Fund the sender with more than the stream total so the assertion is
+    // about the change in balance, not the sender being drained to zero.
+    let t = StreamTest::setup(1_500);
+    t.set_time(100);
+
+    let sender_before = t.token.balance(&t.sender);
+    let contract_before = t.token.balance(&t.contract.address);
+
+    t.open_default_stream(1_000);
+
+    assert_eq!(t.token.balance(&t.sender), sender_before - 1_000);
+    assert_eq!(
+        t.token.balance(&t.contract.address),
+        contract_before + 1_000
+    );
+}
+
+#[test]
+fn contract_balance_equals_the_locked_amount() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // The contract holds exactly what has not been paid out yet: the unvested
+    // remainder plus whatever has vested but not been withdrawn.
+    let assert_balance_matches = || {
+        let stream = t.contract.get_stream(&id);
+        let balance = t.token.balance(&t.contract.address);
+        assert_eq!(balance, stream.total_amount - stream.withdrawn);
+        assert_eq!(
+            balance,
+            t.contract.locked(&id) + t.contract.withdrawable(&id)
+        );
+    };
+
+    // Mid-stream, before any withdrawal.
+    t.set_time(600);
+    assert_balance_matches();
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+
+    // After a partial withdrawal.
+    t.contract.withdraw_amount(&id, &200);
+    assert_balance_matches();
+    assert_eq!(t.token.balance(&t.contract.address), 800);
+
+    // Later in the stream, after a further partial withdrawal.
+    t.set_time(850);
+    t.contract.withdraw_amount(&id, &300);
+    assert_balance_matches();
+    assert_eq!(t.token.balance(&t.contract.address), 500);
+}
+
+#[test]
+fn error_codes_are_stable() {
+    // These values are part of the public interface; see `StreamError`.
+    assert_eq!(StreamError::StreamNotFound as u32, 1);
+    assert_eq!(StreamError::InvalidTimeRange as u32, 3);
+    assert_eq!(StreamError::InvalidAmount as u32, 4);
+    assert_eq!(StreamError::InvalidCliff as u32, 5);
+    assert_eq!(StreamError::AlreadyCancelled as u32, 6);
+    assert_eq!(StreamError::NothingToWithdraw as u32, 7);
+    assert_eq!(StreamError::InsufficientBalance as u32, 8);
+    assert_eq!(StreamError::StreamAlreadyCompleted as u32, 9);
+    assert_eq!(StreamError::AmountTooLarge as u32, 10);
+    assert_eq!(StreamError::StreamWindowInPast as u32, 11);
+    assert_eq!(StreamError::StreamCountExhausted as u32, 12);
+    assert_eq!(StreamError::InvalidParticipant as u32, 13);
+}
