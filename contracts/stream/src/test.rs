@@ -338,8 +338,9 @@ fn withdraw_releases_vested_in_steps() {
 
     // Midpoint: half has vested.
     t.set_time(600);
-    assert_eq!(t.contract.withdraw(&id), 500);
-    assert_eq!(t.token.balance(&t.recipient), 500);
+    let withdrawn = t.contract.withdraw(&id);
+    assert_eq!(withdrawn, 500);
+    assert_eq!(t.token.balance(&t.recipient), withdrawn);
     // Nothing more is available until the clock advances again.
     assert_eq!(t.contract.withdrawable(&id), 0);
 
@@ -448,8 +449,9 @@ fn withdraw_amount_takes_a_partial_balance() {
 
     // Midpoint: 500 vested. Take only 200 of it.
     t.set_time(600);
-    assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
-    assert_eq!(t.token.balance(&t.recipient), 200);
+    let withdrawn = t.contract.withdraw_amount(&id, &200);
+    assert_eq!(withdrawn, 200);
+    assert_eq!(t.token.balance(&t.recipient), withdrawn);
     // 300 of the vested 500 is still available.
     assert_eq!(t.contract.withdrawable(&id), 300);
 
@@ -784,6 +786,7 @@ fn cancel_refunds_unvested_and_preserves_vested() {
         t.contract.try_cancel(&id),
         Err(Ok(StreamError::AlreadyCancelled))
     );
+    assert_eq!(t.event_publishers(), Vec::new(&t.env));
 }
 
 /// Cancel a stream the recipient has already partially withdrawn from.
@@ -810,14 +813,15 @@ fn cancel_after_partial_withdrawal() {
     // Midpoint: 500 vested, 500 still locked. The recipient takes 200 of the
     // vested half and leaves 300 behind.
     t.set_time(600);
-    assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
-    assert_eq!(t.token.balance(&t.recipient), 200);
+    let withdrawn = t.contract.withdraw_amount(&id, &200);
+    assert_eq!(withdrawn, 200);
+    assert_eq!(t.token.balance(&t.recipient), withdrawn);
 
     // The sender cancels. The refund is the unvested half; the 200 already
     // withdrawn is not double-refunded to the sender.
     let refund = t.contract.cancel(&id);
     assert_eq!(refund, 500);
-    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.token.balance(&t.sender), refund);
     assert_eq!(t.token.balance(&t.contract.address), 300);
 
     // The stored stream is frozen at the vested amount with the prior
@@ -832,8 +836,9 @@ fn cancel_after_partial_withdrawal() {
     // with the 200 already taken that is the full vested 500, the split adds
     // up to the original total, and the contract is drained.
     assert_eq!(t.contract.withdrawable(&id), 300);
-    assert_eq!(t.contract.withdraw(&id), 300);
-    assert_eq!(t.token.balance(&t.recipient), 500);
+    let remaining_withdrawal = t.contract.withdraw(&id);
+    assert_eq!(remaining_withdrawal, 300);
+    assert_eq!(t.token.balance(&t.recipient), withdrawn + remaining_withdrawal);
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
