@@ -571,6 +571,35 @@ Because this is **integer (truncating) division**, any fractional stroop is
 discarded toward zero. The recipient is never credited more than their exact
 linear share — the rounding always favours the contract.
 
+### Amount ceiling
+
+`create_stream` rejects any `total_amount` greater than **`i64::MAX`
+(9 223 372 036 854 775 807 stroops, approximately 9.2 × 10¹⁸)**. This is not
+an arbitrary policy limit — it is a safety bound derived from the vesting
+arithmetic.
+
+The vesting formula multiplies `total_amount` by an elapsed-time value before
+dividing:
+
+```
+vested = total_amount * elapsed / duration
+```
+
+Both `total_amount` and `elapsed` are widened to `i128` for the multiplication.
+`elapsed` can be at most `u64::MAX` seconds (the full range of the Soroban
+ledger clock). For the product to stay within `i128::MAX` for every possible
+elapsed value, `total_amount` must satisfy:
+
+```
+total_amount * u64::MAX ≤ i128::MAX
+total_amount ≤ i128::MAX / u64::MAX ≈ 5.0 × 10¹⁸
+```
+
+`i64::MAX` (≈ 9.2 × 10¹⁸) is above that quotient, so the bound used in the
+contract is slightly conservative, but it is the cleanest expressible limit and
+is well above the total supply of any realistic token. A call that exceeds the
+ceiling is rejected with `AmountTooLarge` before any tokens move.
+
 **No-cliff example:** a stream of **1000 units over `[100, 1100]`** with
 `cliff_time == start_time == 100` (no cliff):
 
