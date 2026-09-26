@@ -413,6 +413,10 @@ fn progress_reports_basis_points() {
     // Halfway is 50 percent, in basis points.
     t.set_time(600);
     assert_eq!(t.contract.progress(&id), 5_000);
+    // One second before the end, progress must still be below the maximum.
+    t.set_time(1_099);
+    assert_eq!(t.contract.progress(&id), 9_990);
+    assert!(t.contract.progress(&id) < 10_000);
     // Fully vested at the end.
     t.set_time(1_100);
     assert_eq!(t.contract.progress(&id), 10_000);
@@ -967,6 +971,34 @@ fn cancel_immediately_after_start() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// Cancelling at the exact start leaves no elapsed time to vest, so the full
+/// deposit returns to the sender and nothing is claimable by the recipient.
+#[test]
+fn cancel_at_start_time_refunds_the_full_amount() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // No time has elapsed at start_time, so none of the deposit has vested.
+    assert_eq!(t.contract.cancel(&id), 1_000);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+}
+
 /// Cancel a stream before its cliff has been reached.
 ///
 /// Nothing has vested yet, so the recipient keeps nothing and the whole amount
@@ -1297,7 +1329,7 @@ fn cancel_past_end_time_is_rejected_and_status_stays_completed() {
 }
 
 #[test]
-fn second_withdraw_without_progress_is_rejected() {
+fn second_withdraw_at_same_timestamp_is_rejected() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
     let id = t.contract.create_stream(
@@ -1312,12 +1344,14 @@ fn second_withdraw_without_progress_is_rejected() {
 
     t.set_time(600);
     assert_eq!(t.contract.withdraw(&id), 500);
+    let withdrawn_before = t.contract.get_stream(&id).withdrawn;
 
     // Withdrawing again with no time elapsed releases nothing.
     assert_eq!(
         t.contract.try_withdraw(&id),
         Err(Ok(StreamError::NothingToWithdraw))
     );
+    assert_eq!(t.contract.get_stream(&id).withdrawn, withdrawn_before);
     assert_eq!(t.token.balance(&t.recipient), 500);
 }
 
