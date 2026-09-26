@@ -43,9 +43,79 @@ cargo test
 cargo audit --deny warnings
 ```
 
+> **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
+
 CI runs the same checks on every push and pull request. The audit command uses the
-allowlist in `.cargo/audit.toml`; see the
-[Testing section of the README](README.md#testing) for what is ignored and why.
+allowlist in `.cargo/audit.toml`.
+
+## Testing
+
+**Tests must control the ledger clock explicitly.** A test may never depend on
+wall-clock time: do not read the current time, do not sleep to let time pass,
+and do not assert against a duration measured in real seconds.
+
+`Env::default()` starts the test ledger at a fixed timestamp, and the suite only
+moves time forward by assigning it. Time in a test is therefore a value you
+choose, not a value that drifts.
+
+The contracts have two clocks, and `StreamTest` in
+[`contracts/stream/src/test.rs`](contracts/stream/src/test.rs) exposes a helper
+for each:
+
+| Helper | Underlying call | Use it for |
+| ------ | --------------- | ---------- |
+| `set_time(ts)` | `env.ledger().set_timestamp(ts)` | the stream schedule: start, cliff, withdrawal eligibility |
+| `set_sequence(seq)` | `env.ledger().set_sequence_number(seq)` | entry lifetimes, which are counted in ledgers rather than seconds |
+
+`withdraw_releases_vested_in_steps` is the reference example. It creates a
+stream, then steps the clock to the midpoint, the three-quarter point, and the
+end, asserting the exact amount released at each step:
+
+```rust
+let t = StreamTest::setup(1_000);
+t.set_time(100);
+let id = t.contract.create_stream(
+    &t.sender,
+    &t.recipient,
+    &t.token_address,
+    &1_000,
+    &100,
+    &1_100,
+    &100,
+);
+
+// Midpoint: half has vested.
+t.set_time(600);
+assert_eq!(t.contract.withdraw(&id), 500);
+assert_eq!(t.token.balance(&t.recipient), 500);
+```
+
+When you need the raw API, `env.ledger().set_timestamp(...)` is equivalent; a
+few tests in the same file call it directly.
+
+### Why time-dependent tests are rejected
+
+A test that reads the host clock has no stable answer, so the suite stops being
+a signal:
+
+- **The result depends on when it runs.** The same code passes and fails
+  depending on machine speed, load, and clock resolution. A boundary case such
+  as "is the current time still before the cliff?" then resolves differently on
+  a busy CI runner, and the failure surfaces far from its cause.
+- **The interesting cases are unreachable.** Stream behaviour is defined across
+  a timeline: before the start, at a cliff, mid-stream, exactly at the end, and
+  after it. You cannot wait for those moments, and pinning a stream to the host
+  clock only ever exercises whichever one the test happens to run at. Assigning
+  the timestamp makes each case a single line.
+- **The suite gets slower.** A test that sleeps pays that sleep on every run,
+  locally and in CI, to reach a timestamp you could have assigned outright.
+
+This also keeps the tests honest about the contracts. Contract code reads the
+current time from the ledger (`env.ledger().timestamp()`, for example in
+`create_stream` and `withdraw`) and never from the host. A test that injects a
+host timestamp would break the assumption the rest of the suite relies on, and
+could let a regression that reintroduced wall-clock time into the contract pass
+unnoticed.
 
 ## Commit messages
 
