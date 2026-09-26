@@ -299,6 +299,69 @@ which means tokens remain unclaimed. The `get_stream` view exposes the raw
 `withdrawn` and `total_amount` fields for a precise accounting check:
 `withdrawn == total_amount` confirms the recipient has taken everything.
 
+## Events
+
+Every mutating entry point publishes a Soroban event when it succeeds. Rejected
+calls publish nothing. Indexers and off-chain consumers use these events to
+track stream state without follow-up `get_stream` calls, and to filter streams
+by participant address.
+
+**Field order is part of the interface.** The Soroban event encoding preserves
+declaration order, so reordering fields in any event struct is a breaking change
+for downstream consumers — treat it with the same care as renaming a field or
+changing its type.
+
+Each event has a set of *topics* (marked `#[topic]`) that the network indexes
+for efficient filtering, and a *data* payload containing the remaining fields.
+Topics appear first in the encoding; the data fields follow in declaration order.
+
+### `Created`
+
+Emitted by `create_stream` when a new stream is opened successfully.
+
+| Field | Kind | Type | Description |
+|-------|------|------|-------------|
+| `sender` | topic | `Address` | The address that funded the stream |
+| `recipient` | topic | `Address` | The address that will receive the vested tokens |
+| `id` | data | `u64` | The id assigned to the new stream |
+| `token` | data | `Address` | The token contract address |
+| `total_amount` | data | `i128` | Total tokens locked into the stream |
+| `start_time` | data | `u64` | Unix timestamp (seconds) when vesting begins |
+| `end_time` | data | `u64` | Unix timestamp (seconds) when the stream is fully vested |
+| `cliff_time` | data | `u64` | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
+
+Indexers can subscribe on the `sender` or `recipient` topics to receive all
+streams for a given address without scanning every event.
+
+### `Withdrawn`
+
+Emitted by both `withdraw` and `withdraw_amount` when tokens are transferred to
+the recipient.
+
+| Field | Kind | Type | Description |
+|-------|------|------|-------------|
+| `recipient` | topic | `Address` | The address that received the tokens |
+| `id` | data | `u64` | The stream that was drawn from |
+| `amount` | data | `i128` | Number of tokens transferred in this call |
+
+### `Cancelled`
+
+Emitted by `cancel` when a sender stops a stream early. Both sides of the split
+are included so an indexer can record the final state without a follow-up
+`get_stream` call.
+
+| Field | Kind | Type | Description |
+|-------|------|------|-------------|
+| `sender` | topic | `Address` | The address that cancelled the stream and received the refund |
+| `id` | data | `u64` | The stream that was cancelled |
+| `recipient_amount` | data | `i128` | Vested tokens still claimable by the recipient after cancellation |
+| `sender_refund` | data | `i128` | Unvested tokens immediately refunded to the sender |
+
+Note that `recipient_amount` reflects the *remaining claimable balance* at
+cancellation time (vested minus already withdrawn), not the total that had
+vested. The sender refund covers only the unvested portion; tokens the recipient
+had already withdrawn are not returned.
+
 ## Reading the contract interface
 
 The contract's public interface — every entry point name, its parameter names
@@ -570,6 +633,35 @@ overflows for any amount at or below the `MAX_AMOUNT` cap (`i64::MAX` stroops).
 Because this is **integer (truncating) division**, any fractional stroop is
 discarded toward zero. The recipient is never credited more than their exact
 linear share — the rounding always favours the contract.
+
+### Amount ceiling
+
+`create_stream` rejects any `total_amount` greater than **`i64::MAX`
+(9 223 372 036 854 775 807 stroops, approximately 9.2 × 10¹⁸)**. This is not
+an arbitrary policy limit — it is a safety bound derived from the vesting
+arithmetic.
+
+The vesting formula multiplies `total_amount` by an elapsed-time value before
+dividing:
+
+```
+vested = total_amount * elapsed / duration
+```
+
+Both `total_amount` and `elapsed` are widened to `i128` for the multiplication.
+`elapsed` can be at most `u64::MAX` seconds (the full range of the Soroban
+ledger clock). For the product to stay within `i128::MAX` for every possible
+elapsed value, `total_amount` must satisfy:
+
+```
+total_amount * u64::MAX ≤ i128::MAX
+total_amount ≤ i128::MAX / u64::MAX ≈ 5.0 × 10¹⁸
+```
+
+`i64::MAX` (≈ 9.2 × 10¹⁸) is above that quotient, so the bound used in the
+contract is slightly conservative, but it is the cleanest expressible limit and
+is well above the total supply of any realistic token. A call that exceeds the
+ceiling is rejected with `AmountTooLarge` before any tokens move.
 
 **No-cliff example:** a stream of **1000 units over `[100, 1100]`** with
 `cliff_time == start_time == 100` (no cliff):

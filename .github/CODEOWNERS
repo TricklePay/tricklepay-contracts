@@ -2,3 +2,8 @@
 # held by the team rather than by individuals, so review does not depend on any
 # one person being available.
 *       @TricklePay/maintainers
+
+# Deployment scripts affect how the contract reaches the network. Changes here
+# are reviewed explicitly to catch configuration or sequencing mistakes before
+# they affect a live deployment.
+/scripts/       @TricklePay/maintainers
