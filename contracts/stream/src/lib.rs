@@ -40,11 +40,13 @@
 //!   - [`StreamContract::status`]: Query current lifecycle status ([`StreamStatus`]).
 //!   - [`StreamContract::stream_count`]: Query total number of streams created.
 //!
-//! For calculation details on linear vesting, see the [`vesting`] module.
+//! For calculation details on linear vesting, see the [`vesting`] module, and
+//! for the lifecycle status rules see the [`status`] module.
 
 mod contract;
 mod error;
 mod events;
+pub mod status;
 mod storage;
 mod types;
 pub mod vesting;

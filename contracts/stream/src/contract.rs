@@ -2,6 +2,7 @@ use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
 
 use crate::error::StreamError;
 use crate::events;
+use crate::status;
 use crate::storage;
 use crate::types::{Stream, StreamStatus};
 use crate::vesting;
@@ -20,12 +21,97 @@ pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
 /// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
 pub const BPS_SCALE: u32 = 10_000;
+/// Check every rule `create_stream` enforces, before any token moves and
+/// before any storage is written.
+///
+/// The rules are evaluated in the order documented on
+/// [`StreamContract::create_stream`] and the first one that matches decides
+/// the error, so a rejected call is indistinguishable from the equivalent
+/// inline checks. Nothing here mutates state: the only storage touched is the
+/// stream counter, which is read to hand back the id for the new stream.
+///
+/// Returns the id to use for the new stream together with the counter value
+/// to persist once the transfer has succeeded.
+fn validate_stream_creation(
+    env: &Env,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    total_amount: i128,
+    start_time: u64,
+    end_time: u64,
+    cliff_time: u64,
+) -> Result<(u64, u64), StreamError> {
+    // 1. Participants. Identity is the most fundamental precondition and
+    //    these are pure comparisons, so they run first.
+    //
+    //    A stream from an address to itself has no effect other than
+    //    locking the sender's own tokens and handing them back over time.
+    //    It is almost always a mistake — a swapped argument or an unset
+    //    field — so it is refused rather than silently accepted.
+    if sender == recipient {
+        return Err(StreamError::InvalidParticipant);
+    }
+    //    A token contract cannot act as a stream participant, and attempting
+    //    to stream a token to or from its own address is refused.
+    if token == sender || token == recipient {
+        return Err(StreamError::InvalidParticipant);
+    }
+    //    This contract's own address is not valid in any role. Each case
+    //    fails differently — an unclaimable recipient, a token with no
+    //    `transfer` entry point, a sender drawing on the holdings that
+    //    back every other stream — so all three are refused here.
+    let this = env.current_contract_address();
+    if sender == &this || recipient == &this || token == &this {
+        return Err(StreamError::InvalidParticipant);
+    }
+
+    // 2. Amount.
+    if total_amount <= 0 {
+        return Err(StreamError::InvalidAmount);
+    }
+    if total_amount > MAX_AMOUNT {
+        return Err(StreamError::AmountTooLarge);
+    }
+
+    // 3. Schedule.
+    if start_time >= end_time {
+        return Err(StreamError::InvalidTimeRange);
+    }
+    if cliff_time < start_time || cliff_time > end_time {
+        return Err(StreamError::InvalidCliff);
+    }
+    // Reject a window that is entirely in the past. A stream whose
+    // end_time has already passed would be 100 % vested on creation —
+    // effectively an immediate transfer with extra ceremony. Callers who
+    // genuinely need that should use a token transfer directly.
+    if end_time <= env.ledger().timestamp() {
+        return Err(StreamError::StreamWindowInPast);
+    }
+
+    // 4. Capacity. Reserve the id before any tokens move. The counter is
+    //    the source of every id and never reuses one, so if it were
+    //    allowed to wrap the next stream would be written over a record
+    //    that already exists. Checking here means an exhausted counter
+    //    costs the caller nothing.
+    let id = storage::stream_count(env);
+    let next_id = id.checked_add(1).ok_or(StreamError::StreamCountExhausted)?;
+
+    Ok((id, next_id))
+}
 
 #[contract]
 pub struct StreamContract;
 
 #[contractimpl]
 impl StreamContract {
+    // =====================================================================
+    // Mutating entry points
+    //
+    // These require authorization, write contract state, and may move tokens.
+    // Everything below the views section is read-only and moves nothing.
+    // =====================================================================
+
     /// Open a new stream from `sender` to `recipient`.
     ///
     /// The full `total_amount` is pulled from the sender into the contract at
@@ -92,68 +178,31 @@ impl StreamContract {
     ) -> Result<u64, StreamError> {
         sender.require_auth();
 
-        // 1. Participants. Identity is the most fundamental precondition and
-        //    these are pure comparisons, so they run first.
-        //
-        //    A stream from an address to itself has no effect other than
-        //    locking the sender's own tokens and handing them back over time.
-        //    It is almost always a mistake — a swapped argument or an unset
-        //    field — so it is refused rather than silently accepted.
-        if sender == recipient {
-            return Err(StreamError::InvalidParticipant);
-        }
-        //    A token contract cannot act as a stream participant, and attempting
-        //    to stream a token to or from its own address is refused.
-        if token == sender || token == recipient {
-            return Err(StreamError::InvalidParticipant);
-        }
-        //    This contract's own address is not valid in any role. Each case
-        //    fails differently — an unclaimable recipient, a token with no
-        //    `transfer` entry point, a sender drawing on the holdings that
-        //    back every other stream — so all three are refused here.
-        let this = env.current_contract_address();
-        if sender == this || recipient == this || token == this {
-            return Err(StreamError::InvalidParticipant);
-        }
+        // All five rules are checked up front, before a single token moves or a
+        // single storage key is written, so a rejected call leaves no trace.
+        let (id, next_id) = validate_stream_creation(
+            &env,
+            &sender,
+            &recipient,
+            &token,
+            total_amount,
+            start_time,
+            end_time,
+            cliff_time,
+        )?;
 
-        // 2. Amount.
-        if total_amount <= 0 {
-            return Err(StreamError::InvalidAmount);
-        }
-        if total_amount > MAX_AMOUNT {
-            return Err(StreamError::AmountTooLarge);
-        }
-        // 3. Schedule.
-        if start_time >= end_time {
-            return Err(StreamError::InvalidTimeRange);
-        }
-        if cliff_time < start_time || cliff_time > end_time {
-            return Err(StreamError::InvalidCliff);
-        }
-        // Reject a window that is entirely in the past. A stream whose
-        // end_time has already passed would be 100 % vested on creation —
-        // effectively an immediate transfer with extra ceremony. Callers who
-        // genuinely need that should use a token transfer directly.
-        if end_time <= env.ledger().timestamp() {
-            return Err(StreamError::StreamWindowInPast);
-        }
-
-        // 4. Capacity. Reserve the id before any tokens move. The counter is
-        //    the source of every id and never reuses one, so if it were
-        //    allowed to wrap the next stream would be written over a record
-        //    that already exists. Checking here means an exhausted counter
-        //    costs the caller nothing.
-        let id = storage::stream_count(&env);
-        let next_id = id.checked_add(1).ok_or(StreamError::StreamCountExhausted)?;
-
-        // 5. Effects. Every rejection above returns before this point, so a
-        //    failed creation never moves tokens or touches storage.
-        transfer(&env, &token, &sender, &this, total_amount);
+        // Effects. Every rejection above returns before this point, so a
+        // failed creation never moves tokens or touches storage.
+        TokenClient::new(&env, &token).transfer(
+            &sender,
+            env.current_contract_address(),
+            &total_amount,
+        );
 
         let stream = Stream {
-            sender: sender.clone(),
-            recipient: recipient.clone(),
-            token: token.clone(),
+            sender,
+            recipient,
+            token,
             total_amount,
             withdrawn: 0,
             start_time,
@@ -165,17 +214,7 @@ impl StreamContract {
         storage::set_stream_count(&env, next_id);
         storage::extend_instance_ttl(&env);
 
-        events::Created {
-            sender: sender.clone(),
-            recipient: recipient.clone(),
-            id,
-            token: token.clone(),
-            total_amount,
-            start_time,
-            end_time,
-            cliff_time,
-        }
-        .publish(&env);
+        events::publish_created(&env, id, &stream);
 
         Ok(id)
     }
@@ -198,6 +237,34 @@ impl StreamContract {
             }
             Ok(available)
         })
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        let now = env.ledger().timestamp();
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            now,
+        );
+        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
+        if available <= 0 {
+            return Err(StreamError::NothingToWithdraw);
+        }
+
+        stream.withdrawn += available;
+        storage::set_stream(&env, id, &stream);
+
+        TokenClient::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &stream.recipient,
+            &available,
+        );
+
+        events::publish_withdrawn(&env, &stream.recipient, id, available);
+
+        Ok(available)
     }
 
     /// Withdraw a specific amount, up to what has vested.
@@ -223,6 +290,38 @@ impl StreamContract {
             }
             Ok(amount)
         })
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let now = env.ledger().timestamp();
+        let vested = vesting::vested_amount(
+            stream.total_amount,
+            stream.start_time,
+            stream.end_time,
+            stream.cliff_time,
+            now,
+        );
+        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
+        if amount > available {
+            return Err(StreamError::InsufficientBalance);
+        }
+
+        stream.withdrawn += amount;
+        storage::set_stream(&env, id, &stream);
+
+        TokenClient::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &stream.recipient,
+            &amount,
+        );
+
+        events::publish_withdrawn(&env, &stream.recipient, id, amount);
+
+        Ok(amount)
     }
 
     /// Cancel a stream and refund the unvested remainder to the sender.
@@ -286,9 +385,18 @@ impl StreamContract {
             sender_refund: settlement.refund,
         }
         .publish(&env);
+        events::publish_cancelled(&env, &stream.sender, id, recipient_remaining, refund);
 
         Ok(settlement.refund)
     }
+
+    // =====================================================================
+    // Views
+    //
+    // Read-only. None of these authorize, write storage, or move tokens, so
+    // they are safe to call from anywhere and return the same value for the
+    // same ledger state.
+    // =====================================================================
 
     /// Fetch a stream by id.
     ///
@@ -429,18 +537,7 @@ impl StreamContract {
     /// ```
     pub fn status(env: Env, id: u64) -> Result<StreamStatus, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        if stream.cancelled {
-            return Ok(StreamStatus::Cancelled);
-        }
-        let now = env.ledger().timestamp();
-        let status = if now < stream.start_time {
-            StreamStatus::Pending
-        } else if now >= stream.end_time {
-            StreamStatus::Completed
-        } else {
-            StreamStatus::Streaming
-        };
-        Ok(status)
+        Ok(status::stream_status(&stream, env.ledger().timestamp()))
     }
 
     /// Number of streams created so far. Ids run from zero up to this value
