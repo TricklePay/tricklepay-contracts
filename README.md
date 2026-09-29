@@ -580,7 +580,7 @@ C...  (56-character contract address)
 
 Save that `C...` address. It is the `<CONTRACT_ID>` you pass to every later
 `stellar contract invoke` and to the verification steps in
-[Verifying a deployment](#verifying-a-deployment). The script exits non-zero,
+[Verifying a deployment](#verifying-a-deployment). Record the deployment details using the [deployment record template](docs/DEPLOYMENT_RECORD_TEMPLATE.md). The script exits non-zero,
 without deploying, if the build fails or the identity is unknown or unfunded.
 
 ### Step 2 — fetch the on-chain bytecode hash

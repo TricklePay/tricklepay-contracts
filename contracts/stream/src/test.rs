@@ -4097,3 +4097,67 @@ fn test_cliff_equal_to_start_behaves_as_no_cliff() {
     assert_eq!(t.contract.withdrawable(&id_cliff), 1_000);
     assert_eq!(t.contract.withdrawable(&id_uncliffed), 1_000);
 }
+
+#[test]
+fn counter_is_unchanged_by_withdrawals() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let initial_count = t.contract.stream_count();
+
+    // Partial withdrawal
+    t.set_time(600);
+    t.contract.withdraw_amount(&id, &200);
+    assert_eq!(t.contract.stream_count(), initial_count);
+
+    // Full withdrawal
+    t.contract.withdraw(&id);
+    assert_eq!(t.contract.stream_count(), initial_count);
+}
+
+#[test]
+fn exact_vesting_at_the_midpoint() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    assert_eq!(t.contract.vested(&id), 500);
+}
+
+#[test]
+fn vesting_never_exceeds_the_total() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    for now in [1_099, 1_100, 1_101, 2_000, 10_000, 100_000] {
+        t.set_time(now);
+        assert!(t.contract.vested(&id) <= 1_000);
+    }
+}
