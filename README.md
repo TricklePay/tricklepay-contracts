@@ -77,12 +77,10 @@ A stream is defined by a total amount and a window of time:
   everything while `now < cliff_time || now < start_time`, so when the two are
   equal that reduces to `now < start_time`: exactly the start check every
   stream already applies. The no-cliff case is not special-cased anywhere in
-  the vesting math, it simply falls out of the same expression. This is the usual default when a stream should begin vesting immediately from `start_time` rather than waiting for an explicit cliff. At the other end of the range,
-  `cliff_time == end_time` is equally valid and withholds everything until the
-  window closes — a pure lockup that vests in one step.
+  the vesting math, it simply falls out of the same expression. This is the usual default when a stream should begin vesting immediately from `start_time` rather than waiting for an explicit cliff. `cliff_time == end_time` is equally valid and withholds everything until the window closes — a pure lockup that vests in one step.
 
   A no-cliff stream is what `create_stream(sender, recipient, token, 1000, 100,
-1100, 100)` opens, and it is the shape most of the contract tests use. Its
+  1100, 100)` opens, and it is the shape most of the contract tests use. Its
   schedule is tabulated under [Example schedule](#example-schedule) below.
 
 - **Withdraw** sends the recipient whatever has vested minus what they have
@@ -213,7 +211,7 @@ step-change at the cliff is easy to see.
 | `cliff_time`   | 1 Apr 2025 00:00 UTC | `1743465600` |
 | `end_time`     | 1 Jan 2026 00:00 UTC | `1767225600` |
 
-Duration = 365 days = 31 536 000 seconds.  
+Duration = 365 days = 31 536 000 seconds.
 Cliff offset from start = 90 days = 7 776 000 seconds.
 
 **Create the stream** (no cliff is expressed as `cliff_time == start_time`; here
@@ -708,7 +706,7 @@ you want to confirm that a deployed binary exposes the interface you expect.
 ### When to regenerate
 
 - **Before integrating:** read the interface from the artifact you are about to
-  deploy so your client code matches the real signatures, not a stale copy.
+deploy so your client code matches the real signatures, not a stale copy.
 - **After a code change:** regenerate to confirm that your change added,
   removed, or renamed an entry point as intended.
 - **When auditing a deployment:** read the interface from the on-chain WASM to
@@ -919,7 +917,7 @@ C...  (56-character contract address)
 
 Save that `C...` address. It is the `<CONTRACT_ID>` you pass to every later
 `stellar contract invoke` and to the verification steps in
-[Verifying a deployment](#verifying-a-deployment). The script exits non-zero,
+[Verifying a deployment](#verifying-a-deployment). Record the deployment details using the [deployment record template](docs/DEPLOYMENT_RECORD_TEMPLATE.md). The script exits non-zero,
 without deploying, if the build fails or the identity is unknown or unfunded.
 
 ### Step 2 — fetch the on-chain bytecode hash
@@ -983,10 +981,9 @@ A few common edge cases are worth keeping explicit:
 
 The contract deliberately does not validate some inputs that might look questionable, to ensure it does not break legitimate use cases:
 
-- **Sender and recipient being the same address:** A stream from an address to itself has the effect of locking the sender's own tokens and handing them back over time. This is a legitimate way to enforce a personal vesting schedule or lockup, so it is accepted rather than rejected.
+- **Sender and recipient being the same address:** A stream from an address to itself has the effect of locking the sender's own tokens and handing them back over time. This is a legitimate way to self-stream funds.
 - **Token acting as a participant:** A token contract acting as the `sender` or `recipient` is permitted. Rejecting this could break legitimate smart contract composability.
 - **Start time in the past:** Accepted as long as `end_time` is in the future. The elapsed portion vests immediately, which is useful for backdating streams.
-
 
 ### Integer rounding
 
@@ -1044,7 +1041,7 @@ ceiling is rejected with `AmountTooLarge` before any tokens move.
 | 1100 | 1000      | 1000.0      | 1000               |
 
 The schedule above divides evenly, so truncation has no visible effect. To see
-it, consider \*\*10 units over
+it, consider 10 units over 3 seconds, where 10 * 1 / 3 = 3.333… truncates to 3.
 
 ## Recent Changes
 
