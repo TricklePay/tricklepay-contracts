@@ -129,6 +129,33 @@ fn stream_records_round_trip_under_their_key() {
     assert!(!stored.cancelled);
 }
 
+/// Issue #363 — validation must not rewrite any part of the accepted schedule
+/// before it is persisted. This catches accidental normalization of timestamps
+/// or cliff boundaries between validation and storage.
+#[test]
+fn schedule_is_stored_exactly_as_validated() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(1_000);
+
+    let start_time = 1_234;
+    let end_time = 9_876;
+    let cliff_time = 5_678;
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &start_time,
+        &end_time,
+        &cliff_time,
+    );
+
+    let stored = t.persistent_stream(&DataKey::Stream(id)).unwrap();
+    assert_eq!(stored.start_time, start_time);
+    assert_eq!(stored.end_time, end_time);
+    assert_eq!(stored.cliff_time, cliff_time);
+}
+
 /// A creation rejected because the contract's own address was passed as
 /// `recipient` writes no key at all. The participant checks run before the
 /// transfer and before storage, so `Stream(0)` stays empty and the id is not
