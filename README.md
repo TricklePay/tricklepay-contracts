@@ -513,9 +513,8 @@ ls -la target/wasm32v1-none/release/tricklepay_stream.wasm
 wc -c < target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
-**Current size:** as of 2026-10-03, the release WASM built from this source
-is **40,808 bytes** (≈ 40 KB). There is no enforced ceiling checked in CI, so
-this number is a reference point, not a budget — treat a jump that isn't
+**Current size:** the release WASM built from main at commit [b95108a](https://github.com/TricklePay/tricklepay-contracts/commit/b95108a) is **43,775 bytes** (≈ 43 KB). There is no enforced ceiling checked in CI, so
+this number is a reference point, not a budget; the byte count can vary with the Rust toolchain version and documentation-comment length — treat a jump that isn't
 explained by an intentional feature addition as a regression worth
 investigating before merging, the same way `make audit` and `make check`
 surface other classes of regressions.
