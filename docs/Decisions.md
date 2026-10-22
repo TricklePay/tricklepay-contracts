@@ -5,6 +5,31 @@ oversights, so a reviewer who notices the gap does not have to re-litigate it
 from scratch. Each record is numbered and, once accepted, is not edited in
 place — a changed decision gets a new record that supersedes it and says so.
 
+## Index
+
+Add each new ADR to this list with its status and heading link.
+
+| Decision | Status |
+| --- | --- |
+| [Enumeration is off-chain, not an entry point](#adr-1-enumeration-is-off-chain-not-an-entry-point) | Accepted |
+| [Immutable architecture with no admin or initializer](#adr-immutable-architecture-with-no-admin-or-initializer) | Accepted |
+| [Linear-only vesting release curve](#adr-linear-only-vesting-release-curve) | Accepted |
+| [On-demand derived stream status](#adr-on-demand-derived-stream-status) | Accepted |
+| [Ledger timestamp as the canonical clock](#adr-ledger-timestamp-as-the-canonical-clock) | Accepted |
+| [`i128` amount type and `i64::MAX` stream amount ceiling](#adr-i128-amount-type-and-i64max-stream-amount-ceiling) | Accepted |
+| [No pause, freeze, or emergency-stop mechanism](#adr-no-pause-freeze-or-emergency-stop-mechanism) | Accepted |
+| [Full escrow at stream creation](#adr-full-escrow-at-stream-creation) | Accepted |
+| [Self-streams are allowed](#adr-self-streams-are-allowed-sender--recipient) | Accepted |
+| [Accept any token address without an allowlist](#adr-accept-any-token-address-without-an-allowlist) | Accepted |
+| [Only `create_stream` extends the instance TTL](#adr-only-create_stream-extends-the-instance-ttl) | Accepted |
+| [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
+| [Keep the stream id in event data](./ADR-552-stream-id-event-topic.md#adr-keep-the-stream-id-in-event-data) | Accepted |
+
+## New ADR template note
+
+When adding an ADR, include its title and status, then add a row with that
+status and a link to its heading in the index above.
+
 ## ADR 1: Enumeration is off-chain, not an entry point
 
 **Status:** Accepted

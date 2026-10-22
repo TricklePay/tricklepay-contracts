@@ -437,9 +437,33 @@ the codes above. Some of these collide: the Stellar Asset Contract's
 `13`, the same as `InvalidParticipant`. To distinguish them, check the failing
 contract's address in the transaction's diagnostic events — if it matches this
 stream contract, use the table above; if it matches the token passed to
-`create_stream`, use that token's error table. See
-[`contracts/stream/src/error.rs`](contracts/stream/src/error.rs) for a full
-explanation and list of known collisions with the Stellar Asset Contract.
+`create_stream`, use that token's error table. The error variants are defined
+in [`contracts/stream/src/error.rs`](contracts/stream/src/error.rs).
+
+### Rustdoc policy and validation order
+
+Rustdoc on spec-visible entry points, types, fields, errors, and events is kept
+to a concise summary of each item's purpose and essential behavior. Detailed
+validation order, edge cases, examples, and interface rationale belong here
+or in the relevant `docs/` guide, not in the embedded contract spec.
+
+`create_stream` checks sender authorization first, then rejects using the
+contract address as sender, recipient, or token, followed by amount validity
+and maximum, schedule validity, and id capacity. Each rejection occurs before
+token transfer or storage writes, so it consumes no id and moves no funds.
+
+For `cancel`, the stream lookup happens before sender authorization. An unknown
+id therefore returns `StreamNotFound` without requiring authorization. For an
+existing stream, the sender must authorize; then an already-cancelled stream
+returns `AlreadyCancelled` before the check for `end_time`, which returns
+`StreamAlreadyCompleted`. This order means an unauthorized caller cannot
+inspect an existing stream's cancellation or completion state.
+
+Both withdrawal methods also look up the stream before checking authorization;
+an existing stream requires recipient authorization. `withdraw` returns
+`NothingToWithdraw` when no balance is available. `withdraw_amount` checks
+that the requested amount is positive, then returns `InsufficientBalance` if
+it exceeds the currently withdrawable balance.
 
 ## Development workflow
 
@@ -547,12 +571,10 @@ ls -la target/wasm32v1-none/release/tricklepay_stream.wasm
 wc -c < target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
-**Current size:** as of 2026-10-03, the release WASM built from this source
-is **40,808 bytes** (≈ 40 KB). There is no enforced ceiling checked in CI, so
-this number is a reference point, not a budget — treat a jump that isn't
-explained by an intentional feature addition as a regression worth
-investigating before merging, the same way `make audit` and `make check`
-surface other classes of regressions.
+**Current size:** Not measured for this source revision. Run `make size` and
+record its output before merging; the optimized artifact size depends on the
+exact source and compiler toolchain. There is no enforced ceiling checked in
+CI, so use the measurement as a reference point, not a budget.
 
 ## Implementation details
 
@@ -778,6 +800,12 @@ the recipient.
 Emitted by `cancel` when a sender stops a stream early. Both sides of the split
 are included so an indexer can record the final state without a follow-up
 `get_stream` call.
+
+Only `sender` is indexed as a topic. Adding `recipient` would make recipient
+filtering simpler, but would change the event schema and require coordinated
+updates by downstream consumers. Consumers can associate cancellations with
+recipients using the stream id from events and `get_stream`, or scan the
+unindexed event data; the existing schema avoids a breaking change.
 
 | Field              | Kind  | Type      | Description                                                       |
 | ------------------ | ----- | --------- | ----------------------------------------------------------------- |
