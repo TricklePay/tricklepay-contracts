@@ -1,7 +1,8 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address};
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
+use crate::contract::{StreamContract, StreamContractClient};
 use crate::{StreamError, StreamStatus};
 
 use super::helpers::StreamTest;
@@ -476,6 +477,43 @@ fn operations_on_unknown_stream_report_not_found() {
         t.contract.try_withdrawable(&99),
         Err(Ok(StreamError::StreamNotFound))
     );
+}
+
+#[test]
+fn unknown_stream_operations_need_no_authorization_and_change_nothing() {
+    let env = Env::default();
+    let contract_id = env.register(StreamContract, ());
+    let contract = StreamContractClient::new(&env, &contract_id);
+
+    let issuer = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(issuer);
+    let token_address = sac.address();
+    let token = token::TokenClient::new(&env, &token_address);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let sender_balance = token.balance(&sender);
+    let contract_balance = token.balance(&contract.address);
+    let recipient_balance = token.balance(&recipient);
+
+    // Keep this aligned with the validation order documented on `StreamContract::cancel`.
+    assert_eq!(
+        contract.try_cancel(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        contract.try_withdraw(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        contract.try_withdraw_amount(&99, &1),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+
+    assert_eq!(contract.stream_count(), 0);
+    assert_eq!(token.balance(&sender), sender_balance);
+    assert_eq!(token.balance(&contract.address), contract_balance);
+    assert_eq!(token.balance(&recipient), recipient_balance);
 }
 
 /// Issue #253 — Withdrawal of a single base unit.
