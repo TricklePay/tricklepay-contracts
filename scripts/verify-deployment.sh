@@ -9,7 +9,7 @@ fi
 WASM="target/wasm32v1-none/release/tricklepay_stream.wasm"
 TMP_WASM="$(mktemp)"
 trap 'rm -f "$TMP_WASM"' EXIT
-cargo build --release --target wasm32v1-none
+cargo build --locked --release --target wasm32v1-none
 stellar contract fetch --id "$1" --network "$2" --out-file "$TMP_WASM"
 
 sha256_file() {
