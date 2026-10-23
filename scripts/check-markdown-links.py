@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 LINK = re.compile(r"!?(?:\[[^]]*\])\(([^)\s]+)(?:\s+[^)]*)?\)")
 HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
-LINE_ANCHOR = re.compile(r"^L\d+(?:-L?\d+)?$", re.IGNORECASE)
+LINE_ANCHOR = re.compile(r"^L\d+(?:[-\u2013]L?\d+)?$", re.IGNORECASE)
 
 
 def slug(text: str) -> str:
@@ -71,18 +71,18 @@ def check_markdown_links(root: Path) -> list[str]:
             if target and not resolved.exists():
                 errors.append(f"{markdown.relative_to(root)}: missing file {raw}")
                 continue
-            if fragment:
-                if LINE_ANCHOR.match(fragment):
-                    continue
-                if resolved.is_file() and resolved.suffix.lower() == ".md":
-                    target_content = resolved.read_text(encoding="utf-8")
-                    anchors = extract_heading_anchors(target_content)
-                    if fragment.lower() not in anchors:
-                        errors.append(f"{markdown.relative_to(root)}: missing heading {raw}")
-                elif not resolved.is_file() and not target:
-                    anchors = extract_heading_anchors(content)
-                    if fragment.lower() not in anchors:
-                        errors.append(f"{markdown.relative_to(root)}: missing heading {raw}")
+            if not fragment:
+                continue
+            if resolved.is_dir():
+                continue
+            if LINE_ANCHOR.match(fragment):
+                continue
+            if resolved.is_file() and resolved.suffix.lower() != ".md":
+                continue
+            target_content = resolved.read_text(encoding="utf-8")
+            anchors = extract_heading_anchors(target_content)
+            if fragment.lower() not in anchors:
+                errors.append(f"{markdown.relative_to(root)}: missing heading {raw}")
     return errors
 
 
