@@ -271,44 +271,23 @@ impl StreamContract {
     ///
     /// # Validation order
     ///
-    /// The following checks run **in this exact order** after the sender's
-    /// authorization is verified. When multiple conditions apply simultaneously,
-    /// the first one encountered determines the error returned:
+    /// The stream is loaded from storage first. If `id` does not exist, this
+    /// returns [`StreamError::StreamNotFound`] before any authorization check,
+    /// so an unknown id can be distinguished without sender authorization.
+    /// For an existing stream, the checks then run in this order:
     ///
-    /// 1. **Authorization** — The stream's `sender` must authorize the call.
-    ///    This check happens first, before any other validation.
-    /// 2. **Stream existence** — Returns [`StreamError::StreamNotFound`] if
-    ///    `id` does not exist in storage.
-    /// 3. **Already cancelled** — Returns [`StreamError::AlreadyCancelled`] if
-    ///    the stream has already been cancelled.
-    /// 4. **Stream completion** — Returns [`StreamError::StreamAlreadyCompleted`]
-    ///    if the current ledger time is at or past `end_time`.
+    /// 1. The stream's `sender` must authorize the call.
+    /// 2. Returns [`StreamError::AlreadyCancelled`] if the stream has already
+    ///    been cancelled.
+    /// 3. Returns [`StreamError::StreamAlreadyCompleted`] if the current ledger
+    ///    time is at or past `end_time` — a fully vested stream has nothing
+    ///    unvested to refund.
     ///
-    /// **Which error wins when both apply:** A stream that is both cancelled
-    /// and past its end time returns [`StreamError::AlreadyCancelled`] (check 3)
-    /// because the cancellation check runs before the completion check. Once a
-    /// stream is cancelled, attempting to cancel it again always fails with
-    /// `AlreadyCancelled`, regardless of what time it is.
-    ///
-    /// **Authorization is required before rejection:** A caller who is not the
-    /// stream's sender will fail authorization (check 1) before seeing any of
-    /// the rejection errors above, even if the stream is cancelled, completed,
-    /// or nonexistent. This means an unauthorized party cannot use `cancel` to
-    /// probe whether a stream exists or what state it is in — every attempt
-    /// fails at authorization first.
-    ///
-    /// # Rejections and Error Behavior
-    ///
-    /// The following checks run in order after the sender's authorization is
-    /// verified. The first failure encountered determines the error returned:
-    ///
-    /// 1. Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage.
-    /// 2. Returns [`StreamError::AlreadyCancelled`] if the stream has already been cancelled.
-    /// 3. Returns [`StreamError::StreamAlreadyCompleted`] if the current ledger time
-    ///    is at or past `end_time` — a fully vested stream has nothing unvested to refund.
-    ///
-    /// If all checks pass, the stream is frozen at the vested amount and the unvested
-    /// remainder is refunded to the sender.
+    /// If a stream is both cancelled and past its end time,
+    /// [`StreamError::AlreadyCancelled`] is returned because the cancellation
+    /// check precedes the completion check. If all checks pass, the stream is
+    /// frozen at the vested amount and the unvested remainder is refunded to
+    /// the sender.
     ///
     /// # Examples
     ///
