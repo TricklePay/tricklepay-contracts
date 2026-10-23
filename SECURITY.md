@@ -11,7 +11,7 @@ public discussion.
 Report vulnerabilities through the canonical disclosure policy maintained in
 the TricklePay documentation repository:
 
-**[https://github.com/Glittersup/tricklepay-docs/security/policy](https://github.com/Glittersup/tricklepay-docs/security/policy)**
+**[https://github.com/TricklePay/docs/security/policy](https://github.com/TricklePay/docs/security/policy)**
 
 That page explains what to include in a report and how coordinated disclosure
 is handled. GitHub also surfaces this file in the "Report a vulnerability"
@@ -64,7 +64,7 @@ The following are **not** in scope for this policy:
 - Bugs in Soroban, the Stellar protocol, or the Stellar network itself —
   report those to the [Stellar Bug Bounty](https://hackerone.com/stellar).
 - Issues in downstream repositories (`tricklepay-backend`,
-  `tricklepay-frontend`, `tricklepay-docs`).
+  `tricklepay-frontend`, `docs`).
 - Purely theoretical issues with no demonstrated impact path.
 
 ## Security model summary
