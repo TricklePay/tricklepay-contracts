@@ -51,6 +51,8 @@ contract.
 
 ### Changed
 
+- **non-ABI:** Embedded contract metadata keys `version` and `repository` are
+  now shown by `stellar contract inspect`.
 - Clarified the README around cliff/no-cliff semantics, exact-end withdrawals,
   and cancellation behaviour so stream boundaries are easier to reason about.
 

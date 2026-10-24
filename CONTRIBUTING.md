@@ -18,9 +18,11 @@ repository and should be kept short rather than duplicating the shared guide.
 
 Prerequisites:
 
-- **Rust** with the pinned toolchain. The exact version and the `wasm32v1-none`
-  target are declared in `rust-toolchain.toml`; install the toolchain and target
-  with [rustup](https://rustup.rs).
+- **Rust stable** with the `wasm32v1-none` target. `rust-toolchain.toml`
+  selects the moving `stable` channel, not an exact compiler version; install
+  the toolchain and target with [rustup](https://rustup.rs). The reproducible
+  WASM build instructions were verified with Rust 1.96.0, so record and use the
+  same compiler version when reproducing a deployment build.
 - **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)**, only
   needed if you deploy the contract to a network.
 
@@ -79,6 +81,14 @@ stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.w
 The equivalent target is `make snapshot`. Run `make check-markdown-links` when
 changing documentation, and use `make verify-deployment CONTRACT_ID=C... NETWORK=testnet`
 to compare a deployment with the local build.
+
+## Contract documentation in the deployed spec
+
+Rustdoc comments on `#[contractimpl]` items, `#[contracttype]` types, and
+`#[contracterror]` errors are included in the deployed WASM spec. They increase
+the binary size and deployment fee, so keep them concise. Use `make size` to
+check the binary size and `make snapshot` to inspect and update the interface
+snapshot.
 
 ## Testing
 
@@ -380,10 +390,12 @@ fixed schedule.
 A tag names a point in source history, **not** a deployed contract address —
 the two are linked only through the reproducible build:
 
-- The tagged commit, built with the pinned toolchain
-  (`rust-toolchain.toml`) targeting `wasm32v1-none`, produces one specific
-  WASM binary with one specific SHA-256 hash, deterministic for that source
-  and toolchain (see
+- The tagged commit, built with the same exact compiler version and target
+  (`wasm32v1-none`) used for deployment, produces the corresponding WASM binary
+  and SHA-256 hash. The build instructions in this repository were verified
+  with Rust 1.96.0; `rust-toolchain.toml` selects the moving `stable` channel,
+  so check the compiler version used for the deployment rather than assuming
+  the current stable compiler will match (see
   [Verifying a deployment](README.md#verifying-a-deployment)).
 - Deploying that WASM (`make deploy IDENTITY=...` / `scripts/deploy.sh`)
   creates a contract at a new address — the `C...` address the deploy script

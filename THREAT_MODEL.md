@@ -301,9 +301,9 @@ Both are granted `ENTRY_TTL` (518,400 ledgers, roughly thirty days) and are exte
 
 **`withdraw`, `withdraw_amount`, and `cancel` do not extend the instance TTL. Only `create_stream` extends it.**
 
-The instance stores `DataKey::StreamCount`, the id counter that assigns every stream its unique id. `create_stream` calls `storage::extend_instance_ttl(&env)` after writing the new stream record ([`contract.rs`](contracts/stream/src/contract.rs#L165)), bringing the instance TTL back to the full `ENTRY_TTL` window if it has decayed below `BUMP_THRESHOLD`.
+The instance stores `DataKey::StreamCount`, the id counter that assigns every stream its unique id. `create_stream` calls `storage::extend_instance_ttl(&env)` after writing the new stream record ([`create_stream` in `contract.rs`](contracts/stream/src/contract.rs)), bringing the instance TTL back to the full `ENTRY_TTL` window if it has decayed below `BUMP_THRESHOLD`.
 
-`withdraw`, `withdraw_amount`, and `cancel` touch only the individual stream's persistent entry (`DataKey::Stream(id)`), which is automatically bumped by Soroban when read or written. They do not call `extend_instance_ttl`. This behavior is pinned by the test `withdraw_and_cancel_do_not_extend_the_instance_ttl` in [`tests/storage.rs`](contracts/stream/src/tests/storage.rs#L457–L472).
+`withdraw`, `withdraw_amount`, and `cancel` touch only the individual stream's persistent entry (`DataKey::Stream(id)`), which is automatically bumped by Soroban when read or written. They do not call `extend_instance_ttl`. This behavior is pinned by the test [`withdraw_and_cancel_do_not_extend_the_instance_ttl` in `tests/storage.rs`](contracts/stream/src/tests/storage.rs).
 
 **Failure mode if the instance expires:** If no stream is created for longer than `ENTRY_TTL` (518,400 ledgers, roughly thirty days) but `withdraw` and `cancel` continue to be called on existing streams, the instance TTL decays to zero and the instance is archived. Once archived:
 - `create_stream` fails with a host storage error (not a `StreamError`), because it cannot read `StreamCount` from archived instance storage.
