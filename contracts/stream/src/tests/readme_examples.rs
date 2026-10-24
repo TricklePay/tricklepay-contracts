@@ -39,6 +39,7 @@ fn readme_cancel_after_withdrawal_leaves_three_hundred_claimable() {
     );
     t.set_time(MIDPOINT);
     assert_eq!(t.contract.withdraw_amount(&id, &200), 200);
+    // Sender refund is the unvested half (500), not the recipient's remaining claim.
     assert_eq!(t.contract.cancel(&id), 500);
     assert_eq!(t.contract.withdrawable(&id), 300);
 }
