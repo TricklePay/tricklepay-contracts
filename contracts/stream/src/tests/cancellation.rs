@@ -3,9 +3,55 @@
 use soroban_sdk::{Event, Vec};
 
 use crate::events::Cancelled;
+use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
+use crate::vesting::Settlement;
 use crate::{StreamError, StreamStatus};
 
 use super::helpers::StreamTest;
+
+#[test]
+fn cancel_preview_matches_cancel_without_writing_or_publishing() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    t.set_sequence(ENTRY_TTL - BUMP_THRESHOLD + 1);
+    let ttl_before = t.stream_ttl(id);
+    let stream_before = t.persistent_stream(&crate::storage::DataKey::Stream(id));
+    let preview = t.contract.cancel_preview(&id);
+
+    assert_eq!(
+        preview,
+        Settlement {
+            refund: 500,
+            recipient_remaining: 500,
+        }
+    );
+    assert_eq!(t.stream_ttl(id), ttl_before);
+    assert_eq!(
+        t.persistent_stream(&crate::storage::DataKey::Stream(id)),
+        stream_before
+    );
+    assert!(t.event_publishers().is_empty());
+    assert_eq!(
+        t.contract.try_cancel_preview(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+
+    assert_eq!(t.contract.cancel(&id), preview.refund);
+    assert_eq!(
+        t.contract.try_cancel_preview(&id),
+        Err(Ok(StreamError::AlreadyCancelled))
+    );
+
+    let completed_id = t.open_default_stream(1_000);
+    t.set_time(1_100);
+    assert_eq!(
+        t.contract.try_cancel_preview(&completed_id),
+        Err(Ok(StreamError::StreamAlreadyCompleted))
+    );
+}
 
 #[test]
 fn cancel_refunds_unvested_and_preserves_vested() {

@@ -8,6 +8,11 @@ pub trait Contract {
     fn progress(env: soroban_sdk::Env, id: u64) -> Result<u32, StreamError>;
     fn withdraw(env: soroban_sdk::Env, id: u64) -> Result<i128, StreamError>;
     fn get_stream(env: soroban_sdk::Env, id: u64) -> Result<Stream, StreamError>;
+    fn cancel_preview(env: soroban_sdk::Env, id: u64) -> Result<Settlement, StreamError>;
+    fn get_streams(
+        env: soroban_sdk::Env,
+        ids: soroban_sdk::Vec<u64>,
+    ) -> Result<soroban_sdk::Vec<Option<Stream>>, StreamError>;
     fn stream_count(env: soroban_sdk::Env) -> u64;
     fn withdrawable(env: soroban_sdk::Env, id: u64) -> Result<i128, StreamError>;
     fn create_stream(
@@ -34,6 +39,12 @@ pub struct Stream {
     pub token: soroban_sdk::Address,
     pub total_amount: i128,
     pub withdrawn: i128,
+}
+#[soroban_sdk::contracttype(export = false)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Settlement {
+    pub refund: i128,
+    pub recipient_remaining: i128,
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -64,6 +75,7 @@ pub enum StreamError {
     StreamWindowInPast = 11,
     StreamCountExhausted = 12,
     InvalidParticipant = 13,
+    BatchTooLarge = 14,
 }
 # [soroban_sdk :: contractevent (export = false , topics = ["created" ,])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
