@@ -146,6 +146,11 @@ pub fn get_stream(env: &Env, id: u64) -> Option<Stream> {
     stream
 }
 
+/// Read a stream without extending its persistent-storage TTL.
+pub fn get_stream_readonly(env: &Env, id: u64) -> Option<Stream> {
+    env.storage().persistent().get(&DataKey::Stream(id))
+}
+
 /// Check whether a stream entry exists without modifying storage or its TTL.
 pub fn has_stream(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Stream(id))

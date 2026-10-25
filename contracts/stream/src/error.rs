@@ -59,7 +59,7 @@ use soroban_sdk::contracterror;
 /// **Values must never be reused or reordered.** Do not renumber a variant,
 /// do not insert a variant with an existing value, and do not give a retired
 /// value (such as `2`) to a new variant. A new error takes the next unused
-/// value after the highest one listed here; today that is `14`.
+/// value after the highest one listed here; the next unused code is `15`.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -146,4 +146,8 @@ pub enum StreamError {
     ///
     /// Interface code `13`.
     InvalidParticipant = 13,
+    /// The requested batch contains more than the allowed number of streams.
+    ///
+    /// Interface code `14`.
+    BatchTooLarge = 14,
 }

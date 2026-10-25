@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
 
 use crate::error::StreamError;
 use crate::events;
@@ -21,6 +21,9 @@ pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
 /// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
 pub const BPS_SCALE: u32 = 10_000;
+
+/// Maximum number of stream ids accepted by [`StreamContract::get_streams`].
+pub const MAX_BATCH_SIZE: u32 = 20;
 
 fn vested_amount_at(stream: &Stream, timestamp: u64) -> i128 {
     stream.vested_amount(timestamp)
@@ -374,6 +377,61 @@ impl StreamContract {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
 
+    /// Preview the settlement for cancelling a stream at the current ledger time.
+    ///
+    /// Returns the same [`vesting::Settlement`] that [`Self::cancel`] would
+    /// produce now, without requiring authorization, changing storage, or
+    /// publishing events. Returns [`StreamError::StreamNotFound`] for an
+    /// unknown id, [`StreamError::AlreadyCancelled`] for a cancelled stream,
+    /// and [`StreamError::StreamAlreadyCompleted`] when the stream has ended.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let settlement = client.cancel_preview(&stream_id);
+    /// ```
+    pub fn cancel_preview(env: Env, id: u64) -> Result<vesting::Settlement, StreamError> {
+        let stream = storage::get_stream_readonly(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Err(StreamError::AlreadyCancelled);
+        }
+
+        let now = env.ledger().timestamp();
+        if now >= stream.end_time {
+            return Err(StreamError::StreamAlreadyCompleted);
+        }
+
+        let vested = stream.vested_amount(now);
+        Ok(vesting::settlement(
+            stream.total_amount,
+            vested,
+            stream.withdrawn,
+        ))
+    }
+
+    /// Fetch several streams in request order, returning `None` for unknown ids.
+    ///
+    /// This view accepts at most [`MAX_BATCH_SIZE`] ids and returns
+    /// [`StreamError::BatchTooLarge`] when the limit is exceeded. It does not
+    /// change storage or publish events.
+    pub fn get_streams(env: Env, ids: Vec<u64>) -> Result<Vec<Option<Stream>>, StreamError> {
+        if ids.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        let mut streams = Vec::new(&env);
+        for id in ids {
+            streams.push_back(storage::get_stream_readonly(&env, id));
+        }
+        Ok(streams)
+    }
+
     /// Whether a stream record exists, including cancelled or completed streams.
     ///
     /// This check does not modify storage or publish events.
@@ -483,7 +541,8 @@ impl StreamContract {
         Ok((stream.total_amount - vested).max(0))
     }
 
-    /// Vesting progress in basis points, from 0 (nothing vested) to 10000
+    /// Vesting progress in basis points, from 0 (nothing vested) to
+    /// [`crate::BPS_SCALE`] (100% vested). Useful for rendering a progress indicator without
     /// (100% vested). Useful for rendering a progress indicator without
     /// fetching the full stream.
     ///
