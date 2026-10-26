@@ -1,10 +1,57 @@
 #![cfg(test)]
 
-use soroban_sdk::Vec;
+use soroban_sdk::{Event, Vec};
 
+use crate::events::Cancelled;
+use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
+use crate::vesting::Settlement;
 use crate::{StreamError, StreamStatus};
 
 use super::helpers::StreamTest;
+
+#[test]
+fn cancel_preview_matches_cancel_without_writing_or_publishing() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    t.set_sequence(ENTRY_TTL - BUMP_THRESHOLD + 1);
+    let ttl_before = t.stream_ttl(id);
+    let stream_before = t.persistent_stream(&crate::storage::DataKey::Stream(id));
+    let preview = t.contract.cancel_preview(&id);
+
+    assert_eq!(
+        preview,
+        Settlement {
+            refund: 500,
+            recipient_remaining: 500,
+        }
+    );
+    assert_eq!(t.stream_ttl(id), ttl_before);
+    assert_eq!(
+        t.persistent_stream(&crate::storage::DataKey::Stream(id)),
+        stream_before
+    );
+    assert!(t.event_publishers().is_empty());
+    assert_eq!(
+        t.contract.try_cancel_preview(&99),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+
+    assert_eq!(t.contract.cancel(&id), preview.refund);
+    assert_eq!(
+        t.contract.try_cancel_preview(&id),
+        Err(Ok(StreamError::AlreadyCancelled))
+    );
+
+    let completed_id = t.open_default_stream(1_000);
+    t.set_time(1_100);
+    assert_eq!(
+        t.contract.try_cancel_preview(&completed_id),
+        Err(Ok(StreamError::StreamAlreadyCompleted))
+    );
+}
 
 #[test]
 fn cancel_refunds_unvested_and_preserves_vested() {
@@ -174,6 +221,50 @@ fn cancel_immediately_after_start() {
     assert_eq!(t.contract.withdraw(&id), 1);
     assert_eq!(t.token.balance(&t.recipient), 1);
     assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
+fn cancel_pending_stream_refunds_full_deposit() {
+    let t = StreamTest::setup(1_000);
+    let now = 50;
+    t.set_time(now);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(t.contract.status(&id), StreamStatus::Pending);
+
+    let refund = t.contract.cancel(&id);
+
+    assert_eq!(refund, 1_000);
+    t.assert_latest_stream_event_topics(
+        Cancelled {
+            sender: t.sender.clone(),
+            id,
+            recipient_amount: 0,
+            sender_refund: 1_000,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.start_time, now);
+    assert_eq!(stream.cliff_time, now);
+    assert_eq!(stream.end_time, now);
+
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(t.contract.progress(&id), 10_000);
 }
 
 /// Cancelling at the exact start leaves no elapsed time to vest, so the full

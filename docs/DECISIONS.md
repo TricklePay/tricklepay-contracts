@@ -115,7 +115,7 @@ address-to-stream-id mapping from their topics. The contract exposes no
   - **Gas & Compute Efficiency**: Linear calculations require minimal arithmetic operations, optimizing Soroban CPU and memory footprint.
   - **Auditability**: Straightforward formulas significantly reduce potential edge cases and rounding bugs during audits.
 - **Impact of Introducing Alternative Curves**:
-  If future development introduces non-linear curves (as noted in the [Roadmap](../README.md#roadmap)), the following changes will be required:
+  If future development introduces non-linear curves (a possible future extension, not currently planned in the README), the following changes will be required:
   - **Interface / ABI**: Stream creation functions must be refactored to accept curve type enums and curve-specific parameters/coefficients.
   - **Events**: Stream initialization events must emit curve metadata so off-chain indexers know which mathematical model applies.
   - **View Functions**: Calculations in `vested_amount` and `claimable_amount` will require dynamic branching or modular curve evaluation functions rather than direct linear interpolation.
@@ -132,7 +132,7 @@ address-to-stream-id mapping from their topics. The contract exposes no
   - **Storage & Gas Optimization**: Eliminates on-chain storage reads/writes for status updates, reducing overall ledger footprint and transaction gas fees.
   - **Impact on Indexers and Clients**: Off-chain indexers, UI frontends, and client SDKs cannot simply read a static status field from contract storage. Instead, they must mirror the contract's status calculation logic using the stream's temporal parameters and the latest ledger header timestamp.
 - **Related References**:
-  - See the status calculation logic in the [Status Module](../contracts/tricklepay/src/types.rs).x
+  - See the status calculation logic in the [Status Module](../contracts/stream/src/status.rs).
 
   ## ADR: Ledger Timestamp as the Canonical Clock
 
@@ -146,7 +146,7 @@ address-to-stream-id mapping from their topics. The contract exposes no
   - **Intuitive Scheduling**: Vesting cliffs and durations align directly with Unix epoch timestamps, making client integration and user comprehension straightforward.
   - **Granularity Limits**: Time calculations are precise to the ledger close interval (~5 seconds) rather than wall-clock milliseconds.
 - **Related References**:
-  - See the detailed discussion on clock precision and assumptions in the [Time and Ledger Clock section of the README](../README.md#time-and-ledger-clock).
+  - See the detailed discussion on clock precision and assumptions in the [Ledger time as the source of truth section of the README](../README.md#ledger-time-as-the-source-of-truth).
 
 
   ## ADR: `i128` Amount Type and `i64::MAX` Stream Amount Ceiling

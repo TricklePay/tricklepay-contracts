@@ -74,12 +74,13 @@ jobs:
               [/(^|\/)(Makefile|makefile|GNUmakefile|justfile|Justfile|Taskfile\.ya?ml)$/, 'changes a task runner file', 'note'],
               [/(^|\/)(noxfile\.py|tox\.ini|setup\.py|setup\.cfg|conftest\.py)$/, 'changes a Python build or test hook'],
               [/(^|\/)scripts\//, 'changes a script under scripts/', 'note'],
+              [/(^|\/)fa-(solid|regular|brands|light|thin|duotone)[^\/]*$/i, 'file name imitates a Font Awesome font, as used by a known malware campaign'],
               [/(^|\/)dist\/setup\.js$/, 'adds a file name used by a known malware campaign (dist/setup.js)'],
               [/(^|\/)branch_structure\.json$/, 'adds a file name used by a known malware campaign (branch_structure.json)'],
               [/(^|\/)temp_[a-z_]*push[a-z_]*\.(bat|cmd|sh|ps1)$/i, 'adds a file name used by a known malware campaign (temp push script)'],
               [/(^|\/)\.env(\.(?!example$|sample$|template$).+)?$/, 'adds an environment file, which may hold secrets'],
             ];
-            const BINARY = /\.(woff2?|ttf|otf|eot|llf|exe|dll|so|dylib|bin|jar|class|zip|tar|gz|tgz|7z|rar|bat|cmd|ps1|vbs|scr|msi|deb|rpm|apk|node|pyc)$/i;
+            const BINARY = /\.(woff2?|ttf|otf|eot|llf|exe|dll|so|dylib|bin|jar|class|zip|tar|gz|tgz|7z|rar|bat|cmd|ps1|vbs|scr|msi|deb|rpm|apk|node|pyc|lik)$/i;
             const IMAGE = /\.(png|jpe?g|gif|webp|ico|avif|bmp)$/i;
             const CODE = /\.(js|jsx|mjs|cjs|ts|tsx|mts|cts|rs|sh|bash|py|rb|go|java|kt|swift|php|pl|ps1)$/i;
             const NO_LONG_LINE_CHECK = /\.(md|mdx|svg|lock|snap|json|csv|txt|map|min\.js|min\.css)$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock)$/i;
@@ -94,6 +95,7 @@ jobs:
               [/(\\x[0-9a-fA-F]{2}){8,}/, 'a long run of \\x escapes'],
               [/(\\u[0-9a-fA-F]{4}){8,}/, 'a long run of \\u escapes'],
               [/[A-Za-z0-9+/]{300,}={0,2}/, 'a long base64-like blob'],
+              [/\b_0x[0-9a-f]{4,}\b/, 'obfuscator-style identifiers (_0x...)'],
               [/String\.fromCharCode\s*\((\s*\d+\s*,){10,}/, 'String.fromCharCode with many character codes'],
               [/(curl|wget)[^\n|]*\|\s*(ba|z)?sh\b/, 'pipes a download into a shell'],
               [/base64\s+(-d|--decode)\b/, 'decodes base64 when it runs'],
@@ -103,9 +105,11 @@ jobs:
               [/(\.ssh\b|\.aws\b|\.npmrc|\.git-credentials|\.gnupg|id_rsa|id_ed25519|\.config\/gh\b|Login Data|wallet\.dat)/i, 'references credential or browser profile locations'],
             ];
             const LIFECYCLE = /"(preinstall|install|postinstall|prepare|prepublish|prepublishOnly|prepack|postpack)"\s*:/;
+            const DOC_DATA = /\.(md|mdx|txt|rst|json|csv|tsv|svg|snap|map|lock|html?|xml|ya?ml|toml|ini|css|scss|less|sql|ipynb|geojson|proto|pem|crt|po|pot)$|(^|\/)(LICENSE|NOTICE|CODEOWNERS)[^\/]*$/i;
             const NO_WS_CHECK = /\.(md|mdx|txt|csv|snap|svg|lock)$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock)$/i;
             const CONFIG_CODE = /(^|\/)((eslint|vite|vitest|next|postcss|tailwind|playwright|jest|babel|webpack|rollup|esbuild|prisma|commitlint|lint-staged|prettier|stylelint|svelte|nuxt|astro|tsup|turbo|cypress|metro|rspack|rsbuild|remix|gatsby)\.config|\.(eslintrc|prettierrc|babelrc|stylelintrc|lintstagedrc|commitlintrc|mocharc))\.(js|cjs|mjs|ts|mts|cts)$/;
             const CONFIG_RISK = /\bcreateRequire\b|child_process|\bfetch\s*\(|(require\(\s*|from\s+)['"](node:)?(https?|net|tls|dgram|dns|vm|worker_threads)['"]/;
+            const MARKERS = new RegExp([['rmcej%', 'otb%'], ['Cot%3T=', 'sthP'], ['_$__', '1e42']].map(([a, b]) => (a + b).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'));
             const hidesCode = (l) => { const runs = l.match(/[ \t]{50,}(?=\S)/g); return !!runs && (Math.max(...runs.map(r => r.length)) >= 100 || l.length > 300); };
             const SCRIPT_LINE = /^\s*"([^"]+)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/;
             const SHELL_TRICKS = /\b(curl|wget|eval|base64|powershell|pwsh|mshta|certutil)\b|\b(bash|sh|zsh)\s+-c\b|\bcmd\s+\/c\b/i;
@@ -155,6 +159,7 @@ jobs:
               const added = (f.patch || '').split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++')).map(l => l.slice(1));
               if (added.some(l => (/\.(md|mdx|txt|rst)$/i.test(path) ? HIDDEN_PROSE : HIDDEN).test(l))) flag(path, 'contains invisible or bidirectional Unicode characters');
               if (CONFIG_CODE.test(path) && added.some(l => CONFIG_RISK.test(l))) flag(path, 'a config file now loads modules dynamically or uses process or network APIs');
+              if (added.some(l => MARKERS.test(l))) flag(path, 'contains a marker string used by a known malware campaign');
               if (!NO_WS_CHECK.test(path) && added.some(l => hidesCode(l))) flag(path, 'adds a line with a long run of spaces or tabs before more text, which can push code off-screen');
               if (/\.(md|mdx|txt)$/i.test(path) && added.some(l => AGENT_INJECTION.test(l))) flag(path, 'contains text addressed to an AI agent');
 
@@ -197,10 +202,10 @@ jobs:
                 if (src) flag(path, `uses a package source other than crates.io (${src.slice(0, 60)})`);
               }
 
-              if (CODE.test(path) || /(^|\/)(Makefile|makefile|GNUmakefile|justfile|Justfile|Taskfile\.ya?ml)$/.test(path) || ((BINARY.test(path) || IMAGE.test(path)) && f.patch)) {
+              if (CODE.test(path) || /(^|\/)(Makefile|makefile|GNUmakefile|justfile|Justfile|Taskfile\.ya?ml)$/.test(path) || ((BINARY.test(path) || IMAGE.test(path)) && f.patch) || (f.patch && !DOC_DATA.test(path))) {
                 if (!NO_LONG_LINE_CHECK.test(path)) {
                   const longest = added.reduce((m, l) => Math.max(m, l.length), 0);
-                  if (longest > 500) flag(path, `adds a line of ${longest} characters, which may be minified or obfuscated code`);
+                  if (longest > (CONFIG_CODE.test(path) ? 300 : 500)) flag(path, `adds a line of ${longest} characters, which may be minified or obfuscated code`);
                 }
                 for (const [re, what] of SUSPICIOUS) if (added.some(l => re.test(l))) flag(path, `adds code using ${what}`);
               }

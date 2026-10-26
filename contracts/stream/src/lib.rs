@@ -29,11 +29,13 @@
 //!
 //! - **Stream Lifecycle**:
 //!   - [`StreamContract::create_stream`]: Open a new token stream with schedule & cliff parameters.
+//!   - [`StreamContract::cancel_preview`]: Preview the settlement for a cancellation.
 //!   - [`StreamContract::withdraw`]: Pull all currently withdrawable vested tokens.
 //!   - [`StreamContract::withdraw_amount`]: Pull a specific portion of vested tokens.
 //!   - [`StreamContract::cancel`]: Stop an active stream early and receive a refund of unvested tokens.
 //! - **State & Balance Queries**:
 //!   - [`StreamContract::get_stream`]: Fetch full stream metadata and state.
+//!   - [`StreamContract::get_streams`]: Fetch multiple streams in one read.
 //!   - [`StreamContract::stream_exists`]: Check whether a stream record exists.
 //!   - [`StreamContract::withdrawable`]: Query tokens vested but not yet withdrawn.
 //!   - [`StreamContract::vested`]: Query total tokens vested since creation.
@@ -61,7 +63,9 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT};
+pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
+/// Basis-points denominator used by [`StreamContract::progress`].
+pub use contract::BPS_SCALE;
 pub use error::StreamError;
 pub use types::{Stream, StreamStatus};
 

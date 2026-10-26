@@ -76,6 +76,7 @@ pub fn withdrawable_amount(vested: i128, withdrawn: i128) -> i128 {
 }
 
 /// How a cancelled stream's escrow is divided between the two parties.
+#[soroban_sdk::contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settlement {
     /// Unvested remainder returned to the sender.

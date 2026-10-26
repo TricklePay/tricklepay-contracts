@@ -54,6 +54,28 @@ class TestCheckMarkdownLinks(unittest.TestCase):
             errors = check_markdown_links(root)
             self.assertEqual(errors, [])
 
+    def test_en_dash_line_anchor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            code_file = root / "lib.rs"
+            code_file.write_text("pub fn sample() {}\n" * 30, encoding="utf-8")
+            md = root / "index.md"
+            md.write_text(
+                "[range](lib.rs#L457\u2013L472)",
+                encoding="utf-8",
+            )
+            errors = check_markdown_links(root)
+            self.assertEqual(errors, [])
+
+    def test_missing_file_with_line_anchor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            md = root / "index.md"
+            md.write_text("[missing](missing.rs#L10)", encoding="utf-8")
+            errors = check_markdown_links(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("missing file missing.rs#L10", errors[0])
+
     def test_directory_link(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

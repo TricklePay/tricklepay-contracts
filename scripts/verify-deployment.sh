@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+#
+# Compare the locally built stream contract with a deployed contract.
+#
+# Usage:
+#   $0 <contract-id> <network>
+#
+# Requires a built or buildable repository tree, the Stellar CLI, network
+# access, and sha256sum or shasum. Exit codes: 0 for a match, 1 for a mismatch,
+# and 2 for incorrect arguments. Build, CLI, or hashing failures also exit
+# non-zero.
+
 set -euo pipefail
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "$ROOT_DIR"
@@ -9,7 +20,7 @@ fi
 WASM="target/wasm32v1-none/release/tricklepay_stream.wasm"
 TMP_WASM="$(mktemp)"
 trap 'rm -f "$TMP_WASM"' EXIT
-cargo build --release --target wasm32v1-none
+cargo build --locked --release --target wasm32v1-none
 stellar contract fetch --id "$1" --network "$2" --out-file "$TMP_WASM"
 
 sha256_file() {

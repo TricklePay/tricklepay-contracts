@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
 
 use crate::error::StreamError;
 use crate::events;
@@ -12,6 +12,9 @@ pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
 /// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
 pub const BPS_SCALE: u32 = 10_000;
+
+/// Maximum number of stream ids accepted by [`StreamContract::get_streams`].
+pub const MAX_BATCH_SIZE: u32 = 20;
 
 fn vested_amount_at(stream: &Stream, timestamp: u64) -> i128 {
     stream.vested_amount(timestamp)
@@ -29,7 +32,64 @@ impl StreamContract {
     // Everything below the views section is read-only and moves nothing.
     // =====================================================================
 
-    /// Opens a linearly vesting stream, escrows the full amount, and returns its id.
+    /// Open a new stream from `sender` to `recipient`.
+    ///
+    /// The full `total_amount` is pulled from the sender into the contract at
+    /// creation, so the recipient is guaranteed the funds exist for the life
+    /// of the stream. Vesting runs linearly from `start_time` to `end_time`;
+    /// pass `cliff_time == start_time` for a stream with no cliff.
+    ///
+    /// Returns the id assigned to the new stream.
+    ///
+    /// # Validation order
+    ///
+    /// Arguments are checked in a fixed order, and **all of it happens before
+    /// any tokens move or any storage is written**. A call that is rejected
+    /// leaves no trace: no transfer, no stream record, no id consumed. When an
+    /// argument list violates more than one rule, the first matching rule below
+    /// determines the error, so the result is deterministic rather than an
+    /// artefact of how the checks happen to be ordered in the body:
+    ///
+    /// 1. **Authorization** — `sender` must authorize the call.
+    /// 2. **Participants** — [`StreamError::InvalidParticipant`] if any of
+    ///    `sender`, `recipient`, or `token` is this contract's own address.
+    /// 3. **Amount** — [`StreamError::InvalidAmount`] if `total_amount` is not
+    ///    positive, then [`StreamError::AmountTooLarge`] if it exceeds
+    ///    [`MAX_AMOUNT`].
+    /// 4. **Schedule** — [`StreamError::InvalidTimeRange`] if `start_time` is
+    ///    not strictly before `end_time`, then [`StreamError::InvalidCliff`]
+    ///    if `cliff_time` falls outside `[start_time, end_time]`, then
+    ///    [`StreamError::StreamWindowInPast`] if `end_time` is not in the
+    ///    future.
+    /// 5. **Capacity** — [`StreamError::StreamCountExhausted`] if the id
+    ///    counter has reached `u64::MAX`. The operation fails closed without
+    ///    wrapping to zero or reusing any previously assigned stream id.
+    ///
+    /// Only once all five pass are tokens transferred and the stream stored.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::testutils::Address as _;
+    /// # use soroban_sdk::{Address, Env};
+    /// # use soroban_sdk::testutils::Address as _;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let sender = Address::generate(&env);
+    /// # let recipient = Address::generate(&env);
+    /// # let token = Address::generate(&env);
+    /// let id = client.create_stream(
+    ///     &sender,
+    ///     &recipient,
+    ///     &token,
+    ///     &1_000_000_000, // 1000 tokens (7 decimals)
+    ///     &1_700_000_000, // start_time (unix timestamp)
+    ///     &1_700_086_400, // end_time (start + 1 day)
+    ///     &1_700_000_000, // cliff_time (no cliff)
+    /// );
+    /// ```
     // A contract entry point: every field is part of the public call shape,
     // so bundling them into a struct would only obscure the interface.
     // The too-many-arguments threshold is raised to 8 in clippy.toml to
@@ -139,7 +199,44 @@ impl StreamContract {
         })
     }
 
-    /// Cancels an active stream, refunds its unvested amount, and leaves vested tokens claimable.
+    /// Cancel a stream and refund the unvested remainder to the sender.
+    ///
+    /// Only the sender may call this. Whatever has vested up to the current
+    /// ledger time stays claimable by the recipient through [`Self::withdraw`];
+    /// the rest is returned to the sender. Once cancelled, no further tokens
+    /// vest. Returns the amount refunded to the sender.
+    ///
+    /// # Validation order
+    ///
+    /// The stream is loaded from storage first. If `id` does not exist, this
+    /// returns [`StreamError::StreamNotFound`] before any authorization check,
+    /// so an unknown id can be distinguished without sender authorization.
+    /// For an existing stream, the checks then run in this order:
+    ///
+    /// 1. The stream's `sender` must authorize the call.
+    /// 2. Returns [`StreamError::AlreadyCancelled`] if the stream has already
+    ///    been cancelled.
+    /// 3. Returns [`StreamError::StreamAlreadyCompleted`] if the current ledger
+    ///    time is at or past `end_time` — a fully vested stream has nothing
+    ///    unvested to refund.
+    ///
+    /// If a stream is both cancelled and past its end time,
+    /// [`StreamError::AlreadyCancelled`] is returned because the cancellation
+    /// check precedes the completion check. If all checks pass, the stream is
+    /// frozen at the vested amount and the unvested remainder is refunded to
+    /// the sender.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let refund_amount = client.cancel(&stream_id);
+    /// ```
     pub fn cancel(env: Env, id: u64) -> Result<i128, StreamError> {
         let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         stream.sender.require_auth();
@@ -200,7 +297,76 @@ impl StreamContract {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
 
-    /// Returns whether a stream record exists, including cancelled and completed streams.
+    /// Preview the settlement for cancelling a stream at the current ledger time.
+    ///
+    /// Returns the same [`vesting::Settlement`] that [`Self::cancel`] would
+    /// produce now, without requiring authorization, changing storage, or
+    /// publishing events. Returns [`StreamError::StreamNotFound`] for an
+    /// unknown id, [`StreamError::AlreadyCancelled`] for a cancelled stream,
+    /// and [`StreamError::StreamAlreadyCompleted`] when the stream has ended.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let settlement = client.cancel_preview(&stream_id);
+    /// ```
+    pub fn cancel_preview(env: Env, id: u64) -> Result<vesting::Settlement, StreamError> {
+        let stream = storage::get_stream_readonly(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Err(StreamError::AlreadyCancelled);
+        }
+
+        let now = env.ledger().timestamp();
+        if now >= stream.end_time {
+            return Err(StreamError::StreamAlreadyCompleted);
+        }
+
+        let vested = stream.vested_amount(now);
+        Ok(vesting::settlement(
+            stream.total_amount,
+            vested,
+            stream.withdrawn,
+        ))
+    }
+
+    /// Fetch several streams in request order, returning `None` for unknown ids.
+    ///
+    /// This view accepts at most [`MAX_BATCH_SIZE`] ids and returns
+    /// [`StreamError::BatchTooLarge`] when the limit is exceeded. It does not
+    /// change storage or publish events.
+    pub fn get_streams(env: Env, ids: Vec<u64>) -> Result<Vec<Option<Stream>>, StreamError> {
+        if ids.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        let mut streams = Vec::new(&env);
+        for id in ids {
+            streams.push_back(storage::get_stream_readonly(&env, id));
+        }
+        Ok(streams)
+    }
+
+    /// Whether a stream record exists, including cancelled or completed streams.
+    ///
+    /// This check does not modify storage or publish events.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let exists = client.stream_exists(&stream_id);
+    /// ```
     pub fn stream_exists(env: Env, id: u64) -> bool {
         storage::has_stream(&env, id)
     }
@@ -231,7 +397,33 @@ impl StreamContract {
         Ok((stream.total_amount - vested).max(0))
     }
 
-    /// Returns vesting progress in basis points, from `0` to `10000`.
+    /// Vesting progress in basis points, from 0 (nothing vested) to
+    /// [`crate::BPS_SCALE`] (100% vested). Useful for rendering a progress indicator without
+    /// (100% vested). Useful for rendering a progress indicator without
+    /// fetching the full stream.
+    ///
+    /// Progress calculations:
+    /// - Returns `0` before `start_time` or `cliff_time`.
+    /// - Scales linearly between `0` and `10000` from `start_time` to `end_time`.
+    /// - Returns `10000` at or after `end_time`, or if `total_amount == 0`.
+    /// - A stream with nothing left to vest, including a cancelled one, reports `10000`.
+    ///
+    /// Rejections and Error Behavior:
+    /// - Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage
+    ///   (e.g. an unknown id or an id from a creation call rejected due to invalid participants).
+    /// - `progress` is a read-only view function: it does not alter state or move tokens.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let bps = client.progress(&stream_id); // e.g. 5000 for 50%
+    /// ```
     pub fn progress(env: Env, id: u64) -> Result<u32, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         if stream.total_amount == 0 {

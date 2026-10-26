@@ -1,11 +1,49 @@
 #![cfg(test)]
 
-use soroban_sdk::vec;
+use soroban_sdk::{vec, Vec};
 
 use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
-use crate::{StreamError, StreamStatus};
+use crate::{StreamError, StreamStatus, MAX_BATCH_SIZE};
 
 use super::helpers::StreamTest;
+
+#[test]
+fn get_streams_returns_in_request_order_and_none_for_unknown_ids() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let first_id = t.open_default_stream(400);
+    let second_id = t.open_default_stream(600);
+
+    t.set_sequence(ENTRY_TTL - BUMP_THRESHOLD + 1);
+    let first_ttl = t.stream_ttl(first_id);
+    let second_ttl = t.stream_ttl(second_id);
+    let streams = t
+        .contract
+        .get_streams(&vec![&t.env, second_id, 99, first_id]);
+    assert_eq!(streams.len(), 3);
+    assert_eq!(streams.get(0).unwrap().unwrap().total_amount, 600);
+    assert_eq!(streams.get(1).unwrap(), None);
+    assert_eq!(streams.get(2).unwrap().unwrap().total_amount, 400);
+    assert_eq!(t.stream_ttl(first_id), first_ttl);
+    assert_eq!(t.stream_ttl(second_id), second_ttl);
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+}
+
+#[test]
+fn get_streams_accepts_empty_input_and_rejects_over_limit() {
+    let t = StreamTest::setup(1_000);
+    let empty: Vec<u64> = Vec::new(&t.env);
+    assert!(t.contract.get_streams(&empty).is_empty());
+
+    let mut oversized = Vec::new(&t.env);
+    for id in 0..=MAX_BATCH_SIZE {
+        oversized.push_back(u64::from(id));
+    }
+    assert_eq!(
+        t.contract.try_get_streams(&oversized),
+        Err(Ok(StreamError::BatchTooLarge))
+    );
+}
 
 #[test]
 fn max_amount_view_returns_i64_max() {
