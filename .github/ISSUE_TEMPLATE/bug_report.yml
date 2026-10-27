@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug. Before you start, please confirm this is not a security vulnerability — if it could put funds at risk, follow the [responsible disclosure policy](https://github.com/Glittersup/tricklepay-docs/security/policy) instead of opening a public issue.
+        Thanks for taking the time to report a bug. Before you start, please confirm this is not a security vulnerability — if it could put funds at risk, follow the [responsible disclosure policy](https://github.com/TricklePay/docs/security/policy) instead of opening a public issue.
   - type: textarea
     id: summary
     attributes:

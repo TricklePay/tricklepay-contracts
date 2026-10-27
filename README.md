@@ -1238,7 +1238,7 @@ not linked out to another organization:
   and serves it to clients.
 - **tricklepay-frontend** — the web client that creates, tracks, and withdraws
   from streams.
-- **tricklepay-docs** — the user- and integrator-facing documentation.
+- **docs** — the user- and integrator-facing documentation.
 
 Integrator-facing operational policy for this contract lives in
 [docs/INTEGRATOR_OPERATIONS.md](docs/INTEGRATOR_OPERATIONS.md).
