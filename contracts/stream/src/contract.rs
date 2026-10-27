@@ -7,16 +7,7 @@ use crate::storage;
 use crate::types::{Stream, StreamStatus};
 use crate::vesting;
 
-/// Maximum value accepted for `total_amount` at stream creation.
-///
-/// The vesting arithmetic computes `total_amount * elapsed / duration` where
-/// `elapsed` can be at most `u64::MAX` seconds (the full range of the ledger
-/// clock). To guarantee that intermediate `i128` multiplication never
-/// overflows — regardless of stream duration — amounts are capped at
-/// `i64::MAX` (≈ 9.2 × 10¹⁸ stroops). The bound is well above the total
-/// supply of any realistic token and satisfies:
-///
-///   `i64::MAX as i128 * u64::MAX as i128 < i128::MAX`
+/// Maximum `total_amount` accepted when creating a stream.
 pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 
 /// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
@@ -185,34 +176,7 @@ impl StreamContract {
         Ok(id)
     }
 
-    /// Withdraw everything that has vested but not yet been taken.
-    ///
-    /// Only the recipient may call this. The amount sent is whatever has
-    /// vested up to the current ledger time minus what was withdrawn before.
-    /// Returns the amount transferred.
-    ///
-    /// # Rejections and Error Behavior
-    ///
-    /// - Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage.
-    /// - Returns [`StreamError::NothingToWithdraw`] if the withdrawable balance is zero
-    ///   (nothing has vested yet, or everything vested has already been withdrawn).
-    ///
-    /// Unlike [`Self::withdraw_amount`], this function never returns
-    /// [`StreamError::InvalidAmount`] or [`StreamError::InsufficientBalance`]
-    /// because it always attempts to withdraw the full available balance
-    /// rather than a caller-specified amount.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let amount_withdrawn = client.withdraw(&stream_id);
-    /// ```
+    /// Transfers the recipient's full withdrawable balance and returns the amount.
     pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
         withdraw_with(&env, id, |available| {
             if available <= 0 {
@@ -222,38 +186,7 @@ impl StreamContract {
         })
     }
 
-    /// Withdraw a specific amount, up to what has vested.
-    ///
-    /// Only the recipient may call this. It behaves like [`Self::withdraw`] but
-    /// lets the caller take less than the full available balance, which is
-    /// useful for drawing a fixed sum or leaving a buffer in the stream. Fails
-    /// if the requested amount exceeds the currently withdrawable balance.
-    /// Returns the amount transferred.
-    ///
-    /// # Rejections and Error Behavior
-    ///
-    /// - Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage.
-    /// - Returns [`StreamError::InvalidAmount`] if `amount` is zero or negative.
-    /// - Returns [`StreamError::InsufficientBalance`] if `amount` exceeds the
-    ///   withdrawable balance (whatever has vested minus what was already withdrawn).
-    ///
-    /// Unlike [`Self::withdraw`], this function never returns
-    /// [`StreamError::NothingToWithdraw`]. When the withdrawable balance is zero,
-    /// any positive `amount` triggers [`StreamError::InsufficientBalance`] instead,
-    /// and a non-positive `amount` triggers [`StreamError::InvalidAmount`] before
-    /// the balance is even checked.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let amount_withdrawn = client.withdraw_amount(&stream_id, &250_000_000);
-    /// ```
+    /// Transfers a requested amount up to the recipient's withdrawable balance.
     pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
         withdraw_with(&env, id, |available| {
             if amount <= 0 {
@@ -359,20 +292,7 @@ impl StreamContract {
     // same ledger state.
     // =====================================================================
 
-    /// Fetch a stream by id.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let stream = client.get_stream(&stream_id);
-    /// assert_eq!(stream.total_amount, 1_000_000_000);
-    /// ```
+    /// Returns the stream with the given id, or `StreamNotFound`.
     pub fn get_stream(env: Env, id: u64) -> Result<Stream, StreamError> {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
@@ -451,90 +371,26 @@ impl StreamContract {
         storage::has_stream(&env, id)
     }
 
-    /// Amount the recipient can withdraw right now.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let available = client.withdrawable(&stream_id);
-    /// ```
+    /// Returns the vested balance not yet withdrawn, or `StreamNotFound`.
     pub fn withdrawable(env: Env, id: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         let vested = stream.vested_amount(env.ledger().timestamp());
         Ok(vesting::withdrawable_amount(vested, stream.withdrawn))
     }
 
-    /// Total amount vested so far, including anything already withdrawn.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let total_vested = client.vested(&stream_id);
-    /// ```
+    /// Returns the total amount vested at the current ledger time, including withdrawals.
     pub fn vested(env: Env, id: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         Ok(vested_amount_at(&stream, env.ledger().timestamp()))
     }
 
-    /// Total amount vested by `timestamp`, including anything already withdrawn.
-    ///
-    /// Times before the start or cliff return zero. At or after the end the full
-    /// amount is vested. A cancelled stream remains frozen at its cancellation
-    /// amount for timestamps at or after cancellation.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let projected = client.vested_at(&stream_id, &1_700_086_400);
-    /// ```
+    /// Returns the total amount vested at `timestamp`, including withdrawals.
     pub fn vested_at(env: Env, id: u64, timestamp: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         Ok(vested_amount_at(&stream, timestamp))
     }
 
-    /// Amount not yet vested: the portion still locked in the contract that the
-    /// recipient cannot withdraw yet.
-    ///
-    /// Locked behavior across stream lifecycle:
-    /// - Before `start_time` or `cliff_time`: returns `total_amount` (entire amount locked).
-    /// - Between `start_time` and `end_time`: decreases linearly as tokens vest (`total_amount - vested`).
-    /// - At or after `end_time`: returns `0` (0% locked).
-    /// - A cancelled stream returns `0` because cancellation freezes `total_amount` at `vested`.
-    ///
-    /// Rejections and Error Behavior:
-    /// - Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage
-    ///   (e.g. an unknown id or an id from a creation call rejected for invalid participants).
-    /// - `locked` is a read-only view function: it does not alter state or move tokens.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let remaining_locked = client.locked(&stream_id);
-    /// ```
+    /// Returns the amount not yet vested, or `StreamNotFound`.
     pub fn locked(env: Env, id: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         let vested = stream.vested_amount(env.ledger().timestamp());
@@ -580,67 +436,18 @@ impl StreamContract {
         Ok(u32::try_from(progress.clamp(0, scale)).expect("clamped progress fits in u32"))
     }
 
-    /// Lifecycle status of a stream at the current ledger time.
-    ///
-    /// Returns the derived [`StreamStatus`] for a valid stream:
-    /// - [`StreamStatus::Cancelled`]: if the stream has been cancelled (takes precedence).
-    /// - [`StreamStatus::Pending`]: if current ledger time `now < start_time`.
-    /// - [`StreamStatus::Streaming`]: if `start_time <= now < end_time`.
-    /// - [`StreamStatus::Completed`]: if `now >= end_time`.
-    ///
-    /// Rejections and Error Behavior:
-    /// - Returns [`StreamError::StreamNotFound`] if `id` does not exist in storage
-    ///   (e.g. an unknown id, or an id from a creation attempt rejected for invalid
-    ///   participants like the contract's own address).
-    /// - `status` is a read-only view function: it does not alter contract state or move tokens.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient, StreamStatus};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// # let stream_id = 0u64;
-    /// let current_status = client.status(&stream_id);
-    /// assert_eq!(current_status, StreamStatus::Streaming);
-    /// ```
+    /// Returns the lifecycle status derived from the stream and current ledger time.
     pub fn status(env: Env, id: u64) -> Result<StreamStatus, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         Ok(status::stream_status(&stream, env.ledger().timestamp()))
     }
 
-    /// Number of streams created so far. Ids run from zero up to this value
-    /// minus one.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// let count = client.stream_count();
-    /// ```
+    /// Returns the number of streams created so far.
     pub fn stream_count(env: Env) -> u64 {
         storage::stream_count(&env)
     }
 
-    /// Maximum amount accepted by `create_stream`, in the token's smallest unit.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use soroban_sdk::Env;
-    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
-    /// # let env = Env::default();
-    /// # let contract_id = env.register(StreamContract, ());
-    /// # let client = StreamContractClient::new(&env, &contract_id);
-    /// let maximum = client.max_amount();
-    /// assert_eq!(maximum, i64::MAX as i128);
-    /// ```
+    /// Returns the maximum amount accepted by `create_stream`.
     pub fn max_amount(_env: Env) -> i128 {
         MAX_AMOUNT
     }

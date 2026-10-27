@@ -64,87 +64,29 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum StreamError {
-    /// No stream exists for the requested identifier.
-    ///
-    /// Interface code `1`.
+    /// No stream exists for the requested identifier (code 1).
     StreamNotFound = 1,
-    /// The start time is not strictly before the end time.
-    ///
-    /// Interface code `3`.
+    /// The start time is not strictly before the end time (code 3).
     InvalidTimeRange = 3,
-    /// The total amount is zero or negative.
-    ///
-    /// Interface code `4`.
+    /// The total amount is zero or negative (code 4).
     InvalidAmount = 4,
-    /// The cliff falls outside the stream's start and end window.
-    ///
-    /// Interface code `5`.
+    /// The cliff is outside the stream's start and end window (code 5).
     InvalidCliff = 5,
-    /// The stream has already been cancelled.
-    ///
-    /// Interface code `6`.
+    /// The stream has already been cancelled (code 6).
     AlreadyCancelled = 6,
-    /// There is nothing available to withdraw right now.
-    ///
-    /// Interface code `7`.
+    /// Nothing is currently available to withdraw (code 7).
     NothingToWithdraw = 7,
-    /// The requested withdrawal is larger than the available balance.
-    ///
-    /// Interface code `8`.
+    /// The requested withdrawal exceeds the available balance (code 8).
     InsufficientBalance = 8,
-    /// The stream has already completed (now >= end_time) and cannot be cancelled.
-    ///
-    /// Interface code `9`.
+    /// The stream is complete and cannot be cancelled (code 9).
     StreamAlreadyCompleted = 9,
-    /// `total_amount` exceeds the maximum allowed value.
-    ///
-    /// The vesting calculation multiplies `total_amount` by an elapsed-time
-    /// value that can be as large as `u64::MAX`. Capping amounts at `i64::MAX`
-    /// guarantees the product never overflows `i128`, because
-    /// `i64::MAX * u64::MAX < i128::MAX`.
-    ///
-    /// Interface code `10`.
+    /// `total_amount` exceeds `MAX_AMOUNT` (code 10).
     AmountTooLarge = 10,
-    /// The stream's time window ends entirely in the past.
-    ///
-    /// `end_time` is before the current ledger timestamp, meaning the stream
-    /// would be 100 % vested the moment it is created — effectively an
-    /// immediate transfer. Use a token transfer directly instead.
-    ///
-    /// Interface code `11`.
+    /// The stream's end time is not in the future (code 11).
     StreamWindowInPast = 11,
-    /// The stream counter has no ids left to assign.
-    ///
-    /// Ids come from a monotonic `u64` counter that never reuses a value. Once
-    /// it reaches `u64::MAX` no further stream can be opened: incrementing
-    /// past that point would wrap to zero and hand out ids that already exist
-    /// in storage, silently overwriting live streams. Reaching this bound
-    /// requires `u64::MAX` successful creations and is not realistic in
-    /// practice, but the contract fails closed rather than corrupt existing
-    /// records.
-    ///
-    /// Interface code `12`.
+    /// The stream id counter cannot be incremented without wrapping (code 12).
     StreamCountExhausted = 12,
-    /// A participant address is not valid for the role it was given.
-    ///
-    /// Returned when `sender` and `recipient` are the same address: such a
-    /// stream only locks the sender's own tokens and returns them over time,
-    /// which is almost always a swapped or unset argument rather than an
-    /// intent.
-    ///
-    /// Also returned when the stream contract's own address appears as
-    /// `sender`, `recipient`, or `token`. As `recipient` the stream would be permanently
-    /// unwithdrawable: `withdraw` requires the recipient's authorization and
-    /// the contract cannot sign for itself, so the locked tokens would have no
-    /// claimant. As `token` it would mean invoking `transfer` on this
-    /// contract, which exposes no such entry point. As `sender` a caller could
-    /// draw on the contract's own holdings, which back every other stream.
-    ///
-    /// Also returned when the token address appears as `sender` or `recipient`:
-    /// a token contract cannot act as a stream participant, and attempting to
-    /// stream a token to or from its own address is an invalid configuration.
-    ///
-    /// Interface code `13`.
+    /// A participant address is invalid for its role (code 13).
     InvalidParticipant = 13,
     /// The requested batch contains more than the allowed number of streams.
     ///
