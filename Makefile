@@ -30,7 +30,7 @@ build: ## Native debug build.
 	cargo build
 
 wasm: ## Optimised WASM artifact for deployment.
-	cargo build --release --target $(WASM_TARGET)
+	cargo build --locked --release --target $(WASM_TARGET)
 	@echo "built $(WASM)"
 
 .PHONY: wasm-hash

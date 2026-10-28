@@ -851,7 +851,7 @@ The reproducible-build instructions below were verified with Rust 1.96.0;
 that exact version.
 
 ```bash
-cargo build --release --target wasm32v1-none
+cargo build --locked --release --target wasm32v1-none
 ```
 
 Then print the interface with the Stellar CLI:
@@ -1002,7 +1002,7 @@ the `wasm32v1-none` target:
 
 ```bash
 rm -f target/wasm32-unknown-unknown/release/tricklepay_stream.wasm
-cargo build --release --target wasm32v1-none
+cargo build --locked --release --target wasm32v1-none
 stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
