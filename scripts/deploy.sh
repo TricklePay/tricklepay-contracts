@@ -24,7 +24,7 @@ WASM_TARGET="wasm32v1-none"
 WASM="target/${WASM_TARGET}/release/tricklepay_stream.wasm"
 
 echo "Building optimized WASM..."
-cargo build --release --target "$WASM_TARGET"
+cargo build --locked --release --target "$WASM_TARGET"
 
 echo "Deploying to ${NETWORK} as '${IDENTITY}'..."
 stellar contract deploy \
