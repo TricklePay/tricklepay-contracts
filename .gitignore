@@ -6,7 +6,6 @@
 # Backup and temporary files
 **/*.rs.bk
 Cargo.lock.bak
-.env
 fix.md
 
 # Auto-generated test and coverage output
@@ -30,5 +29,6 @@ octoshift*.log
 # IDE and OS metadata
 .DS_Store
 .idea/
-.vscode/
 
+config.bat
+node_modules

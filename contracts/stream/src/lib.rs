@@ -63,9 +63,9 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
 /// Basis-points denominator used by [`StreamContract::progress`].
 pub use contract::BPS_SCALE;
+pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
 pub use error::StreamError;
 pub use types::{Stream, StreamStatus};
 
