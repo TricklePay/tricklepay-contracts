@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run weekly on Sunday at midnight UTC to catch upstream toolchain or dependency drift early
+  schedule:
+    - cron: '0 0 * * 0'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,6 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Convention: pin actions to full commit SHAs so CI only runs reviewed
       # action code; refresh these pins intentionally when updating actions.
