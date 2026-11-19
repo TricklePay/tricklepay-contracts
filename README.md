@@ -1,5 +1,8 @@
 # TricklePay Contracts
 
+[![CI](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Soroban smart contracts for TricklePay, a token streaming protocol on Stellar.
 
 A stream locks a sum of tokens from a sender and releases them to a recipient
@@ -512,6 +515,26 @@ The release profile keeps Rust overflow checks enabled. This makes arithmetic
 such as `stream.withdrawn += amount` abort on overflow instead of wrapping, so
 removing `overflow-checks = true` would remove a safety check from contract
 balance updates.
+
+### Running CI checks locally and pre-push hook
+
+`scripts/ci.sh` runs formatting, clippy lints, and tests exactly as CI does, exiting non-zero on the first failure:
+
+```bash
+./scripts/ci.sh
+```
+
+To run these checks automatically before pushing, wire the script into a Git `pre-push` hook:
+
+```bash
+ln -s ../../scripts/ci.sh .git/hooks/pre-push
+```
+
+Or on Windows / PowerShell:
+
+```powershell
+cp scripts/ci.sh .git/hooks/pre-push
+```
 
 ### Reading the test suite
 

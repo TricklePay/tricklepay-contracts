@@ -26,3 +26,5 @@ if ! diff -u "$expected" "$tmp"; then
     echo "contract interface changed; regenerate docs/interface.txt" >&2
     exit 1
 fi
+
+echo "Interface matches."

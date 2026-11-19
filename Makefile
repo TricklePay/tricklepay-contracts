@@ -23,7 +23,7 @@ test-markdown-links: ## Run unit tests for scripts/check-markdown-links.py.
 	python3 scripts/test_check_markdown_links.py
 
 snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
-	stellar contract inspect --wasm $(WASM) > docs/interface.txt
+	stellar contract info interface --wasm $(WASM) --output rust > docs/interface.txt
 
 # Native debug build.
 build: ## Native debug build.
@@ -72,7 +72,7 @@ lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
 	shellcheck scripts/*.sh
 
 docs: ## Build crate documentation, treating warnings as errors.
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
 audit: ## Audit dependencies for known vulnerabilities.
 	cargo audit --deny warnings --file .cargo/audit.toml
