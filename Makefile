@@ -10,7 +10,7 @@ WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
 # Check the release overflow setting and the built contract interface.
 # Use this before opening a pull request.
-all check: check-manifest fmt-check lint test audit
+all check: check-manifest fmt-check lint test audit check-markdown-links test-markdown-links lint-scripts
 	./scripts/diff-interface.sh
 
 check-manifest: ## Verify Cargo manifests parse without resolving remote dependencies.
@@ -23,11 +23,11 @@ test-markdown-links: ## Run unit tests for scripts/check-markdown-links.py.
 	python3 scripts/test_check_markdown_links.py
 
 snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
-	stellar contract inspect --wasm $(WASM) > docs/interface.txt
+	stellar contract info interface --wasm $(WASM) --output rust > docs/interface.txt
 
 # Native debug build.
 build: ## Native debug build.
-	cargo build
+	cargo build --locked
 
 wasm: ## Optimised WASM artifact for deployment.
 	cargo build --locked --release --target $(WASM_TARGET)
@@ -51,7 +51,7 @@ size: wasm ## Report the compiled contract's WASM size (builds it first if neede
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
 
 test: ## Run the full test suite.
-	cargo test
+	cargo test --locked
 
 fmt: ## Format the workspace in place.
 	cargo fmt
@@ -60,22 +60,22 @@ fmt-check: ## Verify formatting without modifying files (used in CI).
 	cargo fmt --check
 
 lint: ## Lint every target and treat warnings as errors.
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --locked --all-targets -- -D warnings
 
 .PHONY: lint-scripts
 lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
+	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
 		echo "Error: ShellCheck is required. Install it with 'brew install shellcheck' or 'apt install shellcheck'." >&2; \
-		exit 1; \
+	else \
+		shellcheck scripts/*.sh; \
 	fi
-	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
-	shellcheck scripts/*.sh
 
 docs: ## Build crate documentation, treating warnings as errors.
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 audit: ## Audit dependencies for known vulnerabilities.
-	cargo audit --deny warnings --file .cargo/audit.toml
+	cargo audit --deny warnings
 
 clean: ## Remove build artifacts.
 	cargo clean

@@ -18,6 +18,10 @@ passing a growing list of `--ignore` flags on the command line.
 |---|---|---|
 | `RUSTSEC-2024-0388` | `derivative 2.2.0` | Unmaintained; pulled in transitively via `ark-* → soroban-env-host`. Test-host only, not in deployed WASM. |
 | `RUSTSEC-2024-0436` | `paste 1.0.15` | Unmaintained; pulled in transitively via `ark-ff`/`wasmi_core → soroban-env-host`. Test-host only, not in deployed WASM. |
+| `RUSTSEC-2026-0387` | `crypto-bigint 0.5.5` | Timing variability in operations intended to be constant-time; pulled in transitively via `elliptic-curve`/`ecdsa`/`k256`/`p256 → soroban-env-host`. Test-host only, not in deployed WASM. |
+| `RUSTSEC-2026-0543` | `chrono 0.4.45` | Unmaintained; transitive test/dev dependency, not in deployed WASM. |
+| `RUSTSEC-2026-0486` | `rustix 1.1.4` | Unsound xattr buffer initialization; transitive test dependency, not in deployed WASM. |
+| `RUSTSEC-2026-0574`..`RUSTSEC-2026-0582` | `heapless 0.8.0` | Unsound notices; pulled in transitively via `stellar-strkey → soroban-sdk`. Test/client bindings only, not in deployed WASM contract runtime. |
 
 These entries should be **reviewed on every Soroban SDK upgrade**. If a newer
 SDK version no longer pulls in the affected crate, the corresponding `ignore`
