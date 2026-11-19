@@ -1,4 +1,7 @@
 #![no_std]
+// Deny unsafe code rather than forbid because the `#[contract]` macro on
+// `StreamContract` generates code under `#[allow(unsafe_code)]`, which causes
+// compiler error E0453 when forbidden.
 #![deny(unsafe_code)]
 
 //! TricklePay stream contract.
