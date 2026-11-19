@@ -129,6 +129,18 @@ end_time, cliff_time) → u64` — opens a new stream, pulls the full
   `create_stream`, so clients can validate against the deployed contract.
   Added 2026-10-20.
 
+- **ABI:** `cancel_preview(id) → Settlement` — returns the settlement amounts
+  (`refund` to sender and `recipient_remaining` to recipient) that a `cancel` call
+  at the current ledger time would produce, without modifying contract state or
+  publishing events. Added 2026-10-25.
+
+- **ABI:** `get_streams(ids) → Vec<Option<Stream>>` — reads up to `MAX_BATCH_SIZE`
+  (20) stream records in request order, returning `None` for unknown or expired
+  ids, without modifying storage or publishing events. Added 2026-10-25.
+
+- **ABI:** `MAX_BATCH_SIZE: u32 = 20` — constant defining the maximum number of
+  stream ids that `get_streams` accepts in a single call. Added 2026-10-25.
+
 ### Changed
 
 - **ABI:** `Created` event payload extended with three schedule fields:

@@ -107,6 +107,81 @@ A stream is defined by a total amount and a window of time:
   that moment; the unvested remainder is refunded to the sender. A cancelled
   stream's vested balance stays claimable.
 
+### Lifecycle sequence diagrams
+
+The following sequence diagrams illustrate the participant interactions, token transfers, state changes, and event emissions for the three primary stream lifecycle operations.
+
+#### Create stream (`create_stream`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Recipient
+
+    Sender->>StreamContract: create_stream(sender, recipient, token, total_amount, start, end, cliff)
+    activate StreamContract
+    StreamContract->>StreamContract: validate participants, schedule, and amount
+    StreamContract->>TokenContract: transfer(from: sender, to: stream_contract, amount: total_amount)
+    activate TokenContract
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract->>StreamContract: persist Stream record (id, total_amount, ...)
+    StreamContract-->>Sender: emit Created(sender, recipient, id, token, total_amount, ...)
+    StreamContract-->>Sender: return stream id (u64)
+    deactivate StreamContract
+```
+
+#### Stream withdrawal (`withdraw` / `withdraw_amount`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Recipient
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+
+    Recipient->>StreamContract: withdraw(id) or withdraw_amount(id, amount)
+    activate StreamContract
+    StreamContract->>StreamContract: compute vested amount and withdrawable balance
+    StreamContract->>TokenContract: transfer(from: stream_contract, to: recipient, amount: payout)
+    activate TokenContract
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract->>StreamContract: persist updated withdrawn amount
+    StreamContract-->>Recipient: emit Withdrawn(recipient, id, amount)
+    StreamContract-->>Recipient: return amount transferred (i128)
+    deactivate StreamContract
+```
+
+#### Stream cancellation (`cancel`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Recipient
+
+    Sender->>StreamContract: cancel(id)
+    activate StreamContract
+    StreamContract->>StreamContract: compute accrued vested amount and unvested refund
+    opt refund > 0
+        StreamContract->>TokenContract: transfer(from: stream_contract, to: sender, amount: refund)
+        activate TokenContract
+        TokenContract-->>StreamContract: ok
+        deactivate TokenContract
+    end
+    StreamContract->>StreamContract: freeze stream (cancelled = true, total_amount = vested)
+    StreamContract-->>Sender: emit Cancelled(sender, id, recipient_amount, sender_refund)
+    StreamContract-->>Sender: return refund amount (i128)
+    deactivate StreamContract
+    Note over Recipient,StreamContract: Recipient can withdraw accrued vested amount anytime
+```
+
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
@@ -505,7 +580,7 @@ reassigned.
 | 11   | `StreamWindowInPast`      | `end_time` is not in the future at stream creation — the window would be entirely in the past, making the stream 100 % vested immediately (use a direct token transfer instead).                                  |
 | 12   | `StreamCountExhausted`    | The stream id counter has reached `u64::MAX` and cannot increment further without wrapping (which would overwrite existing streams). No further streams can be created on this contract instance.                 |
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
-| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` (20) stream ids in a single request.                                                                                        |
+| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request.                                                                                             |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as
