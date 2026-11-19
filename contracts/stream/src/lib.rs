@@ -55,6 +55,7 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod constants;
 mod contract;
 mod error;
 mod events;
@@ -66,9 +67,8 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-/// Basis-points denominator used by [`StreamContract::progress`].
-pub use contract::BPS_SCALE;
-pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use contract::{StreamContract, StreamContractClient};
 pub use error::StreamError;
 pub use types::{Stream, StreamStatus};
 

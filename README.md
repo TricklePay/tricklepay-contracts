@@ -1172,7 +1172,8 @@ isolated and testable:
 | Path                                 | Purpose                                                                                                                                                    |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `contracts/stream/src/lib.rs`        | Crate entry point: the `no_std` declaration and module wiring.                                                                                             |
-| `contracts/stream/src/contract.rs`   | The `#[contract]` / `#[contractimpl]` entry points (`create_stream`, `withdraw`, `cancel`, the views) and the `MAX_AMOUNT` ceiling.                        |
+| `contracts/stream/src/contract.rs`   | The `#[contract]` / `#[contractimpl]` entry points (`create_stream`, `withdraw`, `cancel`, the views).                                                     |
+| `contracts/stream/src/constants.rs`  | Numerical limits and scaling constants (`MAX_AMOUNT`, `BPS_SCALE`, `MAX_BATCH_SIZE`) and their rationale.                                                  |
 | `contracts/stream/src/vesting.rs`    | Pure vesting arithmetic (`vested_amount`, `withdrawable_amount`) that takes plain numbers, with no environment or storage.                                 |
 | `contracts/stream/src/status.rs`     | Pure lifecycle derivation (`stream_status`) from a stream's fields and a timestamp.                                                                        |
 | `contracts/stream/src/types.rs`      | The on-chain `Stream` record and `StreamStatus` enum.                                                                                                      |
