@@ -30,19 +30,125 @@ fn get_streams_returns_in_request_order_and_none_for_unknown_ids() {
 }
 
 #[test]
-fn get_streams_accepts_empty_input_and_rejects_over_limit() {
-    let t = StreamTest::setup(1_000);
+fn get_streams_accepts_exactly_max_batch_size_and_rejects_over_limit() {
+    let t = StreamTest::setup(25_000);
+    t.set_time(100);
+
+    // Empty vector succeeds and returns an empty list.
     let empty: Vec<u64> = Vec::new(&t.env);
     assert!(t.contract.get_streams(&empty).is_empty());
 
-    let mut oversized = Vec::new(&t.env);
-    for id in 0..=MAX_BATCH_SIZE {
-        oversized.push_back(u64::from(id));
+    // Create 20 distinct streams to test exactly MAX_BATCH_SIZE.
+    let mut exact_batch = Vec::new(&t.env);
+    for _ in 0..MAX_BATCH_SIZE {
+        exact_batch.push_back(t.open_default_stream(100));
     }
+    assert_eq!(exact_batch.len(), MAX_BATCH_SIZE);
+
+    // Exactly 20 ids succeed and return all 20 records.
+    let results = t.contract.get_streams(&exact_batch);
+    assert_eq!(results.len(), MAX_BATCH_SIZE);
+    for i in 0..MAX_BATCH_SIZE {
+        let stream = results.get(i).unwrap().expect("stream must be present");
+        assert_eq!(stream.total_amount, 100);
+    }
+
+    // Exactly 21 ids (MAX_BATCH_SIZE + 1) fail with BatchTooLarge.
+    let mut oversized = exact_batch.clone();
+    oversized.push_back(999);
+    assert_eq!(oversized.len(), MAX_BATCH_SIZE + 1);
     assert_eq!(
         t.contract.try_get_streams(&oversized),
         Err(Ok(StreamError::BatchTooLarge))
     );
+}
+
+#[test]
+fn get_streams_returns_duplicate_records_in_request_order() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id_a = t.open_default_stream(300);
+    let id_b = t.open_default_stream(700);
+
+    // Duplicate ids in arbitrary order: [id_a, id_b, id_a, id_a, id_b]
+    let query = vec![&t.env, id_a, id_b, id_a, id_a, id_b];
+    let streams = t.contract.get_streams(&query);
+    assert_eq!(streams.len(), 5);
+    assert_eq!(streams.get(0).unwrap().unwrap().total_amount, 300);
+    assert_eq!(streams.get(1).unwrap().unwrap().total_amount, 700);
+    assert_eq!(streams.get(2).unwrap().unwrap().total_amount, 300);
+    assert_eq!(streams.get(3).unwrap().unwrap().total_amount, 300);
+    assert_eq!(streams.get(4).unwrap().unwrap().total_amount, 700);
+
+    // Exactly 20 duplicate ids of a single stream succeeding at the batch ceiling
+    let mut all_same = Vec::new(&t.env);
+    for _ in 0..MAX_BATCH_SIZE {
+        all_same.push_back(id_a);
+    }
+    let repeated = t.contract.get_streams(&all_same);
+    assert_eq!(repeated.len(), MAX_BATCH_SIZE);
+    for i in 0..MAX_BATCH_SIZE {
+        assert_eq!(repeated.get(i).unwrap().unwrap().total_amount, 300);
+    }
+}
+
+#[test]
+fn get_streams_handles_mixture_of_existing_unknown_and_cancelled_ids() {
+    let t = StreamTest::setup(3_000);
+    t.set_time(100);
+
+    let active_id = t.open_default_stream(500);
+
+    let cancelled_id = t.open_default_stream(600);
+    t.set_time(600);
+    t.contract.cancel(&cancelled_id);
+
+    let completed_id = t.open_default_stream(700);
+    t.set_time(1_200);
+
+    let unknown_id_1 = 999_u64;
+    let unknown_id_2 = 1_000_u64;
+
+    // Mixture: unknown, active, cancelled, unknown, completed, active duplicate
+    let batch = vec![
+        &t.env,
+        unknown_id_1,
+        active_id,
+        cancelled_id,
+        unknown_id_2,
+        completed_id,
+        active_id,
+    ];
+
+    let results = t.contract.get_streams(&batch);
+    assert_eq!(results.len(), 6);
+
+    // [0]: unknown -> None
+    assert_eq!(results.get(0).unwrap(), None);
+
+    // [1]: active stream -> Some
+    let active_stream = results.get(1).unwrap().unwrap();
+    assert_eq!(active_stream.total_amount, 500);
+    assert!(!active_stream.cancelled);
+
+    // [2]: cancelled stream -> Some with frozen vested amount and cancelled flag true
+    let cancelled_stream = results.get(2).unwrap().unwrap();
+    assert_eq!(cancelled_stream.total_amount, 300);
+    assert!(cancelled_stream.cancelled);
+
+    // [3]: unknown -> None without failing the batch
+    assert_eq!(results.get(3).unwrap(), None);
+
+    // [4]: completed stream -> Some
+    let completed_stream = results.get(4).unwrap().unwrap();
+    assert_eq!(completed_stream.total_amount, 700);
+
+    // [5]: duplicate active stream in request order
+    let active_dup = results.get(5).unwrap().unwrap();
+    assert_eq!(active_dup.total_amount, 500);
+
+    // Read queries publish zero events
+    assert_eq!(t.event_publishers(), vec![&t.env]);
 }
 
 #[test]
