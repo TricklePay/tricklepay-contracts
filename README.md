@@ -1042,7 +1042,7 @@ the `wasm32v1-none` target:
 ```bash
 rm -f target/wasm32-unknown-unknown/release/tricklepay_stream.wasm
 cargo build --locked --release --target wasm32v1-none
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust
 ```
 
 Do not rename a `wasm32-unknown-unknown` artifact to make it look like the

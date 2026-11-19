@@ -43,8 +43,8 @@ All of the following must pass before opening a pull request:
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 cargo audit --deny warnings
 bash ./scripts/check-release-overflow.sh
 ./scripts/diff-interface.sh
@@ -283,8 +283,10 @@ and `assert_latest_stream_event_topics` compares the latest event's topics and
 data against an expected `ContractEvent`.
 
 When you are done, run the required checks above — `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings`, and `cargo test`, or
-`make check` for all three — before opening the pull request.
+`cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`, or
+`make check` (which runs manifest verification, code formatting, clippy linting,
+unit tests, dependency audit, markdown link checks, script linting, and interface
+diff verification) — before opening the pull request.
 
 ## Commit messages
 
@@ -374,9 +376,9 @@ fixed schedule.
 
 ### Cutting and tagging a release
 
-1. Confirm `main` is green: `make check` (formatting, lint, tests, audit)
-   plus `./scripts/diff-interface.sh`, so the committed `docs/interface.txt`
-   matches a fresh `make wasm` build.
+1. Confirm `main` is green: `make check` (manifest, formatting, lint, tests, audit,
+   markdown link checks, script linting, and interface diff), so the committed
+   `docs/interface.txt` matches a fresh `make wasm` build.
 2. Pick the version number under
    [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a breaking
    interface change (see

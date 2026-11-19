@@ -12,11 +12,14 @@ repository = "https://github.com/tricklepay/tricklepay-contracts"
 # Pin soroban-sdk to an exact version matching the tests' expected client API.
 # If this needs adjustment, I'll iterate to the exact compatible version.
 soroban-sdk = "=25.3.2"
+proptest = "1.4"
 
 [profile.release]
 opt-level = "z"
 # Keep checked arithmetic in release builds so `stream.withdrawn += amount`
 # and related balance updates abort on overflow instead of wrapping.
+# Removing or disabling overflow-checks (e.g. setting overflow-checks = false)
+# causes scripts/check-release-overflow.sh to fail during `make check` and CI.
 overflow-checks = true
 debug = 0
 strip = "symbols"

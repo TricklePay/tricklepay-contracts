@@ -68,7 +68,7 @@ decoder, or contract address allowlist entry. Before deployment, compare the
 interface with:
 
 ```bash
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust
 ```
 
 ## Recommended Client Retry Behavior
