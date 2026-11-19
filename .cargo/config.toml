@@ -1,3 +1,5 @@
 [alias]
 fmt-check = "fmt --check"
-lint = "clippy --all-targets -- -D warnings"
+lint = "clippy --locked --all-targets -- -D warnings"
+test = "test --locked"
+build = "build --locked"

@@ -33,7 +33,7 @@ snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
 
 # Native debug build.
 build: ## Native debug build.
-	cargo build
+	cargo build --locked
 
 wasm: ## Optimised WASM artifact for deployment.
 	cargo build --locked --release --target $(WASM_TARGET)
@@ -57,7 +57,7 @@ size: wasm ## Report the compiled contract's WASM size (builds it first if neede
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
 
 test: ## Run the full test suite.
-	cargo test
+	cargo test --locked
 
 fmt: ## Format the workspace in place.
 	cargo fmt
@@ -66,16 +66,16 @@ fmt-check: ## Verify formatting without modifying files (used in CI).
 	cargo fmt --check
 
 lint: ## Lint every target and treat warnings as errors.
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --locked --all-targets -- -D warnings
 
 .PHONY: lint-scripts
 lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
+	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
 		echo "Error: ShellCheck is required. Install it with 'brew install shellcheck' or 'apt install shellcheck'." >&2; \
-		exit 1; \
+	else \
+		shellcheck scripts/*.sh; \
 	fi
-	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
-	shellcheck scripts/*.sh
 
 .PHONY: docs
 docs: ## Build crate documentation, treating warnings as errors.
