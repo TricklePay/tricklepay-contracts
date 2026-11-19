@@ -1,11 +1,14 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    token, Address, Env,
+};
 
 use crate::contract::{StreamContract, StreamContractClient};
 use crate::{StreamError, StreamStatus};
 
-use super::helpers::StreamTest;
+use super::helpers::{FeeOnTransferToken, FeeOnTransferTokenClient, StreamTest};
 
 #[test]
 fn withdraw_releases_vested_in_steps() {
@@ -1076,4 +1079,190 @@ fn cancel_fully_drawn_stream_refunds_nothing() {
     assert_eq!(t.token.balance(&t.sender), 0);
     assert_eq!(t.token.balance(&t.contract.address), 0);
     assert_eq!(t.token.balance(&t.recipient), 1_000);
+}
+
+/// The expected outcome is cross-referenced from the threat model decision on balance-difference
+/// checks (see `THREAT_MODEL.md § Decision: deposit verification by balance difference`).
+///
+/// The contract trusts the SEP-41 token interface and deliberately rejects reading the token balance
+/// before and after `transfer` during `create_stream` to avoid cross-contract call overhead for conforming tokens.
+/// When a non-conforming fee-on-transfer token is used:
+/// 1. The contract receives less than `total_amount` (here, 1,000 sent with 10% fee delivers only 900).
+/// 2. The stream record stores the full requested `total_amount = 1,000`.
+/// 3. Intermediate withdrawals succeed as long as the contract has sufficient token balance (e.g. 400 withdrawn).
+/// 4. The final withdrawal fails because the contract's actual balance is less than the remaining vested amount.
+#[test]
+fn fee_on_transfer_token_short_deposit_causes_last_withdrawal_to_fail() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(StreamContract, ());
+    let contract = StreamContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    // Register FeeOnTransferToken with 10% fee (1,000 bps)
+    let token_address = env.register(FeeOnTransferToken, ());
+    let fee_token = FeeOnTransferTokenClient::new(&env, &token_address);
+    fee_token.initialize(&1_000, &Some(fee_collector.clone()));
+
+    // Mint 1,000 tokens to sender
+    fee_token.mint(&sender, &1_000);
+    assert_eq!(fee_token.balance(&sender), 1_000);
+    assert_eq!(fee_token.balance(&contract_id), 0);
+    assert_eq!(fee_token.balance(&recipient), 0);
+    assert_eq!(fee_token.balance(&fee_collector), 0);
+
+    // Set time to start of stream
+    env.ledger().set_timestamp(100);
+
+    // Create stream for 1,000 tokens over [100, 1100]
+    let id = contract.create_stream(
+        &sender,
+        &recipient,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // Due to 10% fee on transfer, contract received only 900 tokens; fee collector got 100.
+    assert_eq!(fee_token.balance(&sender), 0);
+    assert_eq!(fee_token.balance(&contract_id), 900);
+    assert_eq!(fee_token.balance(&fee_collector), 100);
+    assert_eq!(fee_token.balance(&recipient), 0);
+
+    // But the contract recorded total_amount as 1,000 without verifying balance difference:
+    let stream = contract.get_stream(&id);
+    assert_eq!(stream.total_amount, 1_000);
+
+    // At midpoint (t = 600), 500 has vested. Recipient withdraws 400 via withdraw_amount.
+    // Contract transfers 400: contract balance drops by 400 to 500.
+    // With 10% fee on withdrawal transfer, recipient receives 360, and fee collector gets +40.
+    env.ledger().set_timestamp(600);
+    let withdrawn = contract.withdraw_amount(&id, &400);
+    assert_eq!(withdrawn, 400);
+
+    assert_eq!(fee_token.balance(&contract_id), 500);
+    assert_eq!(fee_token.balance(&recipient), 360);
+    assert_eq!(fee_token.balance(&fee_collector), 140);
+
+    // At end of stream (t = 1100), full 1,000 has vested.
+    // Withdrawn so far: 400. Remaining according to contract: 600.
+    // But contract only holds 500!
+    env.ledger().set_timestamp(1_100);
+    assert_eq!(contract.withdrawable(&id), 600);
+
+    // Final withdrawal attempt fails because contract has insufficient token balance (500 < 600)
+    let res = contract.try_withdraw(&id);
+    assert!(
+        res.is_err(),
+        "final withdrawal must fail due to insufficient contract token balance"
+    );
+
+    // Assert resulting balances remain unchanged following the failed withdrawal
+    assert_eq!(fee_token.balance(&sender), 0);
+    assert_eq!(fee_token.balance(&recipient), 360);
+    assert_eq!(fee_token.balance(&contract_id), 500);
+    assert_eq!(fee_token.balance(&fee_collector), 140);
+
+    // Contract accounting still shows withdrawn = 400 because failed withdrawal reverted atomically
+    let stream_after = contract.get_stream(&id);
+    assert_eq!(stream_after.withdrawn, 400);
+}
+
+/// The expected outcome is cross-referenced from the threat model decision on balance-difference
+/// checks (see `THREAT_MODEL.md § Decision: deposit verification by balance difference`).
+///
+/// Demonstrates that when multiple streams share a fee-on-transfer token, earlier full withdrawals
+/// can silently drain the collateral deposited for later streams, leaving the contract insolvent
+/// when subsequent recipients attempt to withdraw.
+#[test]
+fn fee_on_transfer_token_short_deposit_drains_concurrent_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(StreamContract, ());
+    let contract = StreamContractClient::new(&env, &contract_id);
+
+    let sender_1 = Address::generate(&env);
+    let recipient_1 = Address::generate(&env);
+    let sender_2 = Address::generate(&env);
+    let recipient_2 = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    // Register FeeOnTransferToken with 10% fee (1,000 bps)
+    let token_address = env.register(FeeOnTransferToken, ());
+    let fee_token = FeeOnTransferTokenClient::new(&env, &token_address);
+    fee_token.initialize(&1_000, &Some(fee_collector.clone()));
+
+    fee_token.mint(&sender_1, &1_000);
+    fee_token.mint(&sender_2, &1_000);
+
+    env.ledger().set_timestamp(100);
+
+    // Stream 1 deposits 1,000 -> contract gets 900, fee collector gets 100
+    let id_1 = contract.create_stream(
+        &sender_1,
+        &recipient_1,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // Stream 2 deposits 1,000 -> contract gets 900, fee collector gets 100
+    let id_2 = contract.create_stream(
+        &sender_2,
+        &recipient_2,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // Total contract balance is 1,800 (900 + 900), while promised total across streams is 2,000
+    assert_eq!(fee_token.balance(&contract_id), 1_800);
+    assert_eq!(fee_token.balance(&fee_collector), 200);
+
+    // Advance to end of streams
+    env.ledger().set_timestamp(1_100);
+
+    // Stream 1 recipient withdraws full 1,000.
+    // Contract has 1,800 >= 1,000, so withdrawal succeeds!
+    // But this drains 100 tokens of Stream 2's underlying deposit from the contract pool.
+    let withdrawn_1 = contract.withdraw(&id_1);
+    assert_eq!(withdrawn_1, 1_000);
+
+    // Contract balance is now 800 (1,800 - 1,000).
+    // Recipient 1 receives 900 (1,000 - 10% fee), fee collector has 300.
+    assert_eq!(fee_token.balance(&contract_id), 800);
+    assert_eq!(fee_token.balance(&recipient_1), 900);
+    assert_eq!(fee_token.balance(&fee_collector), 300);
+
+    // Stream 2 recipient attempts to withdraw their promised 1,000 tokens:
+    // Contract only holds 800, so the transfer fails!
+    let res_2 = contract.try_withdraw(&id_2);
+    assert!(
+        res_2.is_err(),
+        "Stream 2 withdrawal must fail due to collateral drained by Stream 1"
+    );
+
+    // Assert resulting balances:
+    assert_eq!(fee_token.balance(&recipient_2), 0);
+    assert_eq!(fee_token.balance(&contract_id), 800);
+    assert_eq!(fee_token.balance(&recipient_1), 900);
+    assert_eq!(fee_token.balance(&fee_collector), 300);
+    assert_eq!(fee_token.balance(&sender_1), 0);
+    assert_eq!(fee_token.balance(&sender_2), 0);
+
+    // Stream 2 state remains untouched with withdrawn = 0
+    let stream_2 = contract.get_stream(&id_2);
+    assert_eq!(stream_2.withdrawn, 0);
+    assert_eq!(contract.status(&id_2), StreamStatus::Completed);
 }

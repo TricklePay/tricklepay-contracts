@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events as _, Ledger as _,
@@ -243,5 +244,67 @@ impl<'a> StreamTest<'a> {
                 .persistent()
                 .get_ttl(&DataKey::Stream(id))
         })
+    }
+}
+
+/// A mock token contract that withholds a fee on `transfer`, delivering less to the
+/// recipient than was deducted from the sender.
+///
+/// This models a non-conforming "fee-on-transfer" token to test and pin the stream
+/// contract's behavior when deposits deliver less than `total_amount`.
+#[contract]
+pub struct FeeOnTransferToken;
+
+#[contractimpl]
+impl FeeOnTransferToken {
+    /// Initialize the token with a fee in basis points (e.g. 1000 = 10%) and an optional fee collector address.
+    pub fn initialize(env: Env, fee_bps: u32, fee_collector: Option<Address>) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("fee_bps"), &fee_bps);
+        if let Some(ref collector) = fee_collector {
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("fee_rec"), collector);
+        }
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage().persistent().get(&id).unwrap_or(0)
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(bal + amount));
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
+        assert!(from_bal >= amount, "insufficient balance");
+        env.storage().persistent().set(&from, &(from_bal - amount));
+
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("fee_bps"))
+            .unwrap_or(0);
+        let fee_collector: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("fee_rec"));
+
+        let fee = (amount * fee_bps as i128) / 10_000;
+        let delivered = amount - fee;
+
+        if fee > 0 {
+            if let Some(collector) = fee_collector {
+                let col_bal: i128 = env.storage().persistent().get(&collector).unwrap_or(0);
+                env.storage().persistent().set(&collector, &(col_bal + fee));
+            }
+        }
+
+        let to_bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(to_bal + delivered));
     }
 }
