@@ -23,7 +23,8 @@ Add each new ADR to this list with its status and heading link.
 | [Accept any token address without an allowlist](#adr-accept-any-token-address-without-an-allowlist) | Accepted |
 | [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Accepted |
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
-| [Keep the stream id in event data](./ADR-552-stream-id-event-topic.md#adr-keep-the-stream-id-in-event-data) | Accepted |
+| [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
+| [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
 
 ## New ADR template note
 

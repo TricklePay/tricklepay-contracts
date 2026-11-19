@@ -56,6 +56,10 @@ wasm-hash: ## Build the WASM with the locked dependencies and print its SHA-256 
 size: wasm ## Report the compiled contract's WASM size (builds it first if needed).
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
 
+.PHONY: size-budget
+size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
+	./scripts/check-wasm-size.sh
+
 test: ## Run the full test suite.
 	cargo test --locked
 
@@ -92,6 +96,13 @@ ifndef IDENTITY
 	$(error IDENTITY is undefined. Please provide an identity argument (e.g. make deploy IDENTITY=alice))
 endif
 	./scripts/deploy.sh $(IDENTITY)
+
+verify-deployment: ## Compare a deployed contract's WASM with a local build.
+	@if [ -z "$(CONTRACT_ID)" ] || [ -z "$(NETWORK)" ]; then \
+		echo "Usage: make verify-deployment CONTRACT_ID=C... NETWORK=testnet" >&2; \
+		exit 2; \
+	fi
+	./scripts/verify-deployment.sh "$(CONTRACT_ID)" "$(NETWORK)"
 
 help: ## Show this help message.
 	@echo "Usage: make <target>"
