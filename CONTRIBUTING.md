@@ -50,7 +50,16 @@ bash ./scripts/check-release-overflow.sh
 > **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
 
 CI runs the same checks on every push and pull request. The audit command uses the
-allowlist in `.cargo/audit.toml`.
+allowlist in `.cargo/audit.toml`. CI also runs the Markdown link checker and its
+unit tests with the runner's Python:
+
+```bash
+python3 scripts/check-markdown-links.py
+python3 scripts/test_check_markdown_links.py
+```
+
+The workflow declares `permissions: contents: read`. New jobs must add only the
+permissions they actually need rather than relying on the repository default.
 
 The vesting and status property tests use Proptest's default 256 cases per
 property. To run more cases before a release or after changing property-tested
