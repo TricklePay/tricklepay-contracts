@@ -6,6 +6,7 @@
 //! | Module            | Covers                                                        |
 //! |-------------------|---------------------------------------------------------------|
 //! | `helpers`         | `StreamTest` fixture and shared utilities                     |
+//! | `budget`          | Resource budget regression tests and entry point ceilings     |
 //! | `creation`        | `create_stream`: validation, parameters, participant checks   |
 //! | `withdrawal`      | `withdraw`, `withdraw_amount`: vesting, cliff, partial draws  |
 //! | `cancellation`    | `cancel`: refunds, freezing, cliff scenarios, lifecycle       |

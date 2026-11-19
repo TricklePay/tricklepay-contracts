@@ -73,6 +73,16 @@ contract.
 
 ### Added
 
+- Resource budget regression test suite (`contracts/stream/src/tests/budget.rs`)
+  measuring and asserting documented upper bounds with headroom on CPU instructions,
+  memory, and storage ledger reads/writes for every contract entry point.
+- Boundary and duplicate stream ID test coverage for batch queries (`get_streams`),
+  verifying that exactly `MAX_BATCH_SIZE` (20) IDs succeed, duplicates preserve
+  request order, and unknown IDs return `None` without failing mixed batches.
+- Fee-on-transfer token test coverage pinning the failure modes of short deposits
+  (final withdrawal failure and cross-stream collateral draining), cross-referencing
+  the threat model decision on balance-difference checks.
+
 - **ABI:** `create_stream(sender, recipient, token, total_amount, start_time,
 end_time, cliff_time) → u64` — opens a new stream, pulls the full
   `total_amount` from the sender into the contract, and returns the assigned

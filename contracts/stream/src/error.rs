@@ -24,7 +24,7 @@ use soroban_sdk::contracterror;
 /// mean different things depending on which contract returned it:
 ///
 /// - **`AmountTooLarge` (10) vs. Stellar Asset Contract `BalanceError` (10)**:
-///   This contract returns `10` when `total_amount` exceeds [`MAX_AMOUNT`](crate::contract::MAX_AMOUNT)
+///   This contract returns `10` when `total_amount` exceeds [`MAX_AMOUNT`](crate::constants::MAX_AMOUNT)
 ///   at stream creation. The Stellar Asset Contract (SAC) returns `10` for an
 ///   insufficient balance during transfer. A failed `withdraw` showing
 ///   `Error(Contract, 10)` is the SAC's `BalanceError`, not
