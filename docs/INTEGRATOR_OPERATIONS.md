@@ -253,54 +253,6 @@ time-based, `withdrawable` can change between the check and the submitted
 transaction landing; treat a `NothingToWithdraw` error that still occurs as
 the authoritative answer rather than a bug in the pre-check.
 
-## Withdrawing Before Anything Has Vested
-
-`withdraw` is not a no-op when there is nothing to claim: it returns
-`StreamError::NothingToWithdraw` (interface code `7`) rather than silently
-succeeding or transferring zero tokens. This happens whenever the vested
-amount minus what was already withdrawn is zero or less, including:
-
-- Calling `withdraw` before `start_time`, or before `cliff_time` on a stream
-  that has one.
-- Calling `withdraw` again immediately after a previous withdrawal has
-  already claimed everything vested so far.
-
-`withdraw_amount` behaves differently in this situation: because the caller
-names an amount, a positive request against zero available balance fails
-with `StreamError::InsufficientBalance` (code `8`) instead of
-`NothingToWithdraw`. Only the zero-argument `withdraw` entry point returns
-`NothingToWithdraw`.
-
-### How a client should present this
-
-This is an expected state, not a failure. A recipient who opens a stream
-before the cliff, or right after draining it, will hit this every time. Treat
-`NothingToWithdraw` as information to surface in the UI ("Nothing available
-to claim yet" / "Already withdrawn everything that has vested"), not as an
-error toast, retry prompt, or logged failure. Do not retry the call
-automatically; retrying without the underlying state changing will return the
-same error.
-
-### How to check beforehand
-
-Call the `withdrawable` view before submitting a `withdraw` transaction:
-
-```ignore
-let available = client.withdrawable(&stream_id);
-if available > 0 {
-    client.withdraw(&stream_id);
-}
-```
-
-`withdrawable` returns `vested_amount - withdrawn` for the stream, clamped to
-a minimum of zero (see [`vesting::withdrawable_amount`]). A result of `0`
-means a `withdraw` call would fail with `NothingToWithdraw` right now, so the
-client can disable the withdraw action, hide it, or show the informational
-state instead of attempting the call and parsing an error. Because vesting is
-time-based, `withdrawable` can change between the check and the submitted
-transaction landing; treat a `NothingToWithdraw` error that still occurs as
-the authoritative answer rather than a bug in the pre-check.
-
 ## Token Due Diligence Checklist for Senders
 
 **The stream contract performs no token validation.** It accepts any address
