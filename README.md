@@ -140,6 +140,38 @@ cancelled stream, timestamps at or after cancellation return the amount vested
 when it was cancelled. `stream_exists(id)` only checks whether a record is
 stored; it does not write state or publish events.
 
+### Stream lifecycle and status transitions
+
+A stream's lifecycle is represented by `StreamStatus`, pure logic derived from the stream's schedule (`start_time`, `end_time`), the `cancelled` boolean, and the current ledger timestamp (`now`). Its transitions and triggers are asserted in [`status.rs`](contracts/stream/src/status.rs):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: create_stream (now < start_time)
+    [*] --> Streaming: create_stream (start_time <= now < end_time)
+
+    Pending --> Streaming: [Time-driven] Ledger time reaches start_time (now >= start_time)
+    Pending --> Cancelled: [Transaction] sender calls cancel() (refunds 100% of deposit)
+
+    Streaming --> Completed: [Time-driven] Ledger time reaches end_time (now >= end_time)
+    Streaming --> Cancelled: [Transaction] sender calls cancel() (refunds unvested; freezes vested)
+
+    Completed --> [*]: Terminal state (cancel rejected: StreamAlreadyCompleted)
+    Cancelled --> [*]: Terminal state (permanent: cancel rejected: AlreadyCancelled)
+```
+
+Key lifecycle rules:
+1. **Time-driven vs. Transaction-driven**:
+   - `Pending -> Streaming` and `Streaming -> Completed` transitions are **time-driven**. They occur automatically as ledger time advances past `start_time` and `end_time` respectively, requiring zero transactions or storage updates.
+   - Transitions into `Cancelled` are **transaction-driven**. They require an authenticated on-chain invocation of `cancel(id)` by the stream's `sender`.
+2. **Cancellation is permanent**:
+   - Once cancelled (`cancelled == true`), `status(id)` permanently returns `StreamStatus::Cancelled` across all future timestamps.
+   - Calling `cancel` on an already cancelled stream returns `StreamError::AlreadyCancelled` (code 6).
+3. **Completed streams cannot be cancelled**:
+   - Once ledger time reaches or passes `end_time` (`now >= end_time`), a stream is `Completed`.
+   - Any subsequent call to `cancel` is rejected with `StreamError::StreamAlreadyCompleted` (code 9) because all funds have already vested.
+4. **Cliff does not alter status**:
+   - The optional `cliff_time` gates token withdrawal eligibility, not the lifecycle status. A stream before its cliff reports `StreamStatus::Streaming` as long as `now >= start_time`.
+
 ### Example schedule
 
 Both examples stream **1000 units from `start_time = 100` to `end_time = 1100`**
