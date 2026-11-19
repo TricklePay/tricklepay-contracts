@@ -868,6 +868,165 @@ cancellation time (vested minus already withdrawn), not the total that had
 vested. The sender refund covers only the unvested portion; tokens the recipient
 had already withdrawn are not returned.
 
+### RPC getEvents filter examples
+
+The Soroban RPC `getEvents` method allows off-chain indexers and user interfaces
+to query and stream contract events matching specific topic patterns.
+
+Topics are matched positionally according to the `#[topic]` layout defined in
+[`contracts/stream/src/events.rs`](contracts/stream/src/events.rs). When querying
+events, topic segments are passed as base64-encoded `ScVal` values or wildcards
+(`*` matches any topic in that position):
+
+- **Event symbol topic (index 0):** Every contract event begins with the symbol
+  name in lowercase:
+  - `"created"`: `AAAADwAAAAdjcmVhdGVkAA==`
+  - `"withdrawn"`: `AAAADwAAAAl3aXRoZHJhd24AAAA=`
+  - `"cancelled"`: `AAAADwAAAAljYW5jZWxsZWQAAAA=`
+- **Address topics (indices 1 & 2):** ScVal address values (e.g.,
+  `ScVal::Address`). In JSON-RPC requests, addresses are formatted as base64 XDR.
+
+#### 1. Filter `Created` events by sender
+
+The `Created` event defines topics `[symbol("created"), sender, recipient]`. To
+filter for all streams opened by a specific sender regardless of recipient, match
+the first two positions and pass `*` for the recipient:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"],
+          ["*"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 2. Filter `Created` events by recipient
+
+To filter for streams destined for a specific recipient from any sender, wildcard
+the sender position (index 1) and match the recipient in position 2:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["*"],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 3. Filter `Withdrawn` events by recipient
+
+The `Withdrawn` event defines topics `[symbol("withdrawn"), recipient]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAl3aXRoZHJhd24AAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 4. Filter `Cancelled` events by sender
+
+The `Cancelled` event defines topics `[symbol("cancelled"), sender]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAljYW5jZWxsZWQAAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+> [!IMPORTANT]
+> **Filtering `Cancelled` events:** Unlike `Created`, the `Cancelled` event indexes
+> **only `sender`** as a topic. The recipient's share (`recipient_amount`) is
+> contained within the unindexed data payload rather than topics. As a result,
+> `Cancelled` events **can only be filtered by sender** at the RPC filter layer.
+> Indexers tracking recipient streams must either associate cancellations by stream
+> id from earlier `Created` events, scan unindexed event payloads, or query
+> `get_stream`.
+
+#### Retention window and pagination cursor
+
+- **History retention window:** Standard Soroban RPC nodes retain event history
+  only within the bounded `history-retention-window` (defaulting to 120,960 ledgers,
+  or approximately 7 days on networks with 5-second ledger intervals). Submitting a
+  request with `startLedger` older than the retention boundary returns an error
+  (`startLedger must be within the history retention window`). For long-term
+  historical indexing, applications should continuously ingest events or rely on an
+  archival datastore.
+- **Pagination cursors:** Responses include an opaque paging `cursor` string on
+  each page. When paginating across multiple result pages, pass the returned
+  cursor via `"pagination": { "cursor": "<cursor>", "limit": 100 }`. When `cursor`
+  is provided, `startLedger` **must be omitted** in subsequent continuation requests,
+  as the cursor uniquely encodes the ledger sequence and event offset.
+
 ## Reading the contract interface
 
 The contract's public interface — every entry point name, its parameter names
