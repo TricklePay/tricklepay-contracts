@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy verify-deployment check-manifest check-markdown-links test-markdown-links snapshot help
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -85,6 +85,13 @@ ifndef IDENTITY
 	$(error IDENTITY is undefined. Please provide an identity argument (e.g. make deploy IDENTITY=alice))
 endif
 	./scripts/deploy.sh $(IDENTITY)
+
+verify-deployment: ## Compare a deployed contract's WASM with a local build.
+	@if [ -z "$(CONTRACT_ID)" ] || [ -z "$(NETWORK)" ]; then \
+		echo "Usage: make verify-deployment CONTRACT_ID=C... NETWORK=testnet" >&2; \
+		exit 2; \
+	fi
+	./scripts/verify-deployment.sh "$(CONTRACT_ID)" "$(NETWORK)"
 
 help: ## Show this help message.
 	@echo "Usage: make <target>"
