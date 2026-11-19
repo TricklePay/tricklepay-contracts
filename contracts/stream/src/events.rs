@@ -66,3 +66,20 @@ pub(crate) fn publish_withdrawn(env: &Env, recipient: &Address, id: u64, amount:
     }
     .publish(env);
 }
+
+/// Publishes [`Cancelled`] after settling an early termination.
+pub(crate) fn publish_cancelled(
+    env: &Env,
+    sender: &Address,
+    id: u64,
+    recipient_amount: i128,
+    sender_refund: i128,
+) {
+    Cancelled {
+        sender: sender.clone(),
+        id,
+        recipient_amount,
+        sender_refund,
+    }
+    .publish(env);
+}

@@ -383,6 +383,43 @@ fn repeated_bumps_keep_a_stream_entry_alive_indefinitely() {
     assert_eq!(t.contract.get_stream(&id).total_amount, 1_000);
 }
 
+/// `get_streams` uses `storage::get_stream_readonly` and does not extend a
+/// stream's persistent TTL against decay, even when remaining TTL falls below
+/// `BUMP_THRESHOLD`.
+#[test]
+fn get_streams_does_not_postpone_ttl_decay() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id1 = t.open_default_stream(1_000);
+    let id2 = t.open_default_stream(1_000);
+
+    // Let the entries decay below BUMP_THRESHOLD.
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+
+    let remaining_before = t.stream_ttl(id1);
+    assert_eq!(remaining_before, ENTRY_TTL - elapsed);
+    assert!(remaining_before < BUMP_THRESHOLD);
+
+    // Batch read does not extend TTL.
+    let streams = t.contract.get_streams(&soroban_sdk::vec![&t.env, id1, id2]);
+    assert_eq!(streams.len(), 2);
+    assert_eq!(t.stream_ttl(id1), remaining_before);
+    assert_eq!(t.stream_ttl(id2), remaining_before);
+
+    // Further sequence advance demonstrates TTL continues decaying towards expiration.
+    t.set_sequence(elapsed + 100);
+    let streams_later = t.contract.get_streams(&soroban_sdk::vec![&t.env, id1]);
+    assert_eq!(streams_later.len(), 1);
+    assert_eq!(t.stream_ttl(id1), remaining_before - 100);
+
+    // In contrast, an individual view call resets it back to ENTRY_TTL.
+    t.contract.get_stream(&id1);
+    assert_eq!(t.stream_ttl(id1), ENTRY_TTL);
+    // id2 was not touched by get_stream, so it remains decayed.
+    assert_eq!(t.stream_ttl(id2), remaining_before - 100);
+}
+
 // ── Instance TTL ─────────────────────────────────────────────────────────────
 
 /// `create_stream` extends the instance TTL.

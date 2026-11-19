@@ -328,7 +328,7 @@ Soroban storage entries expire on a ledger clock and are archived once their tim
 | `DataKey::Stream(id)`  | persistent   | one stream record                   |
 | `DataKey::StreamCount` | instance     | the id to assign to the next stream |
 
-Both are granted `ENTRY_TTL` (518,400 ledgers, roughly thirty days) and are extended back to that full window whenever accessed with fewer than `BUMP_THRESHOLD` (103,680 ledgers, roughly six days) remaining.
+Both are granted `ENTRY_TTL` (518,400 ledgers, roughly thirty days) and are extended back to that full window whenever accessed with fewer than `BUMP_THRESHOLD` (103,680 ledgers, roughly six days) remaining. Mutating calls (`create_stream`, `withdraw`, `withdraw_amount`, `cancel`) and individual stream view queries (`get_stream`, `withdrawable`, `vested`, `vested_at`, `locked`, `progress`, `status`) extend persistent stream entries via `storage::get_stream`. In contrast, read-only bulk views and simulation previews (`get_streams`, `cancel_preview`, `stream_exists`) load storage via `storage::get_stream_readonly` or `storage::has_stream` and **never extend** persistent entry TTLs, ensuring batch reads avoid multi-entry write gas amplification and simulations remain side-effect-free.
 
 ### Decision: instance TTL extension on withdraw and cancel
 
@@ -370,7 +370,7 @@ None of these mitigations are built into the contract. The responsibility for ke
 
 **A public `extend_stream_ttl(id)` entry point is not added to the contract.**
 
-**The problem:** A stream that nobody touches for `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived and must be restored before use. Any view call (`get_stream`, `withdrawable`, `vested`, etc.) or mutating call (`withdraw`, `cancel`) extends the stream's TTL, but if the recipient of a long vesting schedule (e.g., a two-year grant) never checks the stream for more than thirty days, it expires. Once expired, the next `withdraw` or `get_stream` call fails with a host storage error until someone submits an off-chain Soroban restore transaction. The recipient, or anyone else who cares about keeping the stream alive, would like a cheap way to extend its TTL without performing a full withdraw or view operation.
+**The problem:** A stream that nobody touches for `ENTRY_TTL` (518,400 ledgers, roughly thirty days) is archived and must be restored before use. Individual view calls (`get_stream`, `withdrawable`, `vested`, `vested_at`, `locked`, `progress`, `status`) and mutating calls (`withdraw`, `cancel`) extend the stream's TTL when below `BUMP_THRESHOLD`. (Batch reads via `get_streams` and previews via `cancel_preview` explicitly do not extend TTL). But if the recipient of a long vesting schedule (e.g., a two-year grant) never checks the stream for more than thirty days, it expires. Once expired, the next `withdraw` or `get_stream` call fails with a host storage error until someone submits an off-chain Soroban restore transaction. The recipient, or anyone else who cares about keeping the stream alive, would like a cheap way to extend its TTL without performing a full withdraw or view operation.
 
 **Proposed entry point:**
 

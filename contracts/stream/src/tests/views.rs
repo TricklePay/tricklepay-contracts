@@ -1,9 +1,10 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
 use soroban_sdk::{vec, Vec};
 
 use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
-use crate::{StreamError, StreamStatus, MAX_BATCH_SIZE};
+use crate::{StreamError, StreamStatus, MAX_AMOUNT, MAX_BATCH_SIZE};
 
 use super::helpers::StreamTest;
 
@@ -584,5 +585,118 @@ fn views_agree_at_every_sampled_time() {
             ((now - 100) * 10_000 / 1_000) as u32
         };
         assert_eq!(progress, expected_progress, "time={now}");
+    }
+}
+
+proptest! {
+    /// Issue #623 — `vested_at(id, timestamp)` is monotonic, bounded in [0, total],
+    /// zero before start and cliff, total at/after end, and agrees with `vested(id)`
+    /// when evaluated at the current ledger timestamp.
+    #[test]
+    fn vested_at_is_monotonic_and_agrees_with_vested(
+        total in 1i128..=MAX_AMOUNT,
+        start in 0u64..=1_000_000u64,
+        duration in 1u64..=1_000_000u64,
+        cliff_offset in 0u64..=1_000_000u64,
+        t1 in 0u64..=2_500_000u64,
+        t2 in 0u64..=2_500_000u64,
+    ) {
+        let end = start + duration;
+        let cliff = start + cliff_offset.min(duration);
+
+        let t = StreamTest::setup(total);
+        t.set_time(0);
+        let id = t.contract.create_stream(
+            &t.sender,
+            &t.recipient,
+            &t.token_address,
+            &total,
+            &start,
+            &end,
+            &cliff,
+        );
+
+        let (early, late) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
+
+        let v1 = t.contract.vested_at(&id, &early);
+        let v2 = t.contract.vested_at(&id, &late);
+
+        // Monotonicity: vested_at never decreases as timestamp advances
+        prop_assert!(
+            v1 <= v2,
+            "vested_at not monotonic: v1 ({}) at {} > v2 ({}) at {}",
+            v1,
+            early,
+            v2,
+            late
+        );
+
+        // Bounds: [0, total]
+        prop_assert!(
+            v1 >= 0 && v1 <= total,
+            "v1 ({}) out of [0, {}]",
+            v1,
+            total
+        );
+        prop_assert!(
+            v2 >= 0 && v2 <= total,
+            "v2 ({}) out of [0, {}]",
+            v2,
+            total
+        );
+
+        // Zero before start or cliff
+        if early < start || early < cliff {
+            prop_assert_eq!(
+                v1,
+                0,
+                "vested_at should be 0 before start/cliff at {}",
+                early
+            );
+        }
+        if late < start || late < cliff {
+            prop_assert_eq!(
+                v2,
+                0,
+                "vested_at should be 0 before start/cliff at {}",
+                late
+            );
+        }
+
+        // Total at and after end
+        if early >= end {
+            prop_assert_eq!(
+                v1,
+                total,
+                "vested_at should be total at/after end at {}",
+                early
+            );
+        }
+        if late >= end {
+            prop_assert_eq!(
+                v2,
+                total,
+                "vested_at should be total at/after end at {}",
+                late
+            );
+        }
+
+        // Agreement with vested():
+        // Evaluating vested() at the corresponding ledger timestamps matches vested_at().
+        t.set_time(early);
+        prop_assert_eq!(
+            t.contract.vested(&id),
+            v1,
+            "vested() does not agree with vested_at at early ({})",
+            early
+        );
+
+        t.set_time(late);
+        prop_assert_eq!(
+            t.contract.vested(&id),
+            v2,
+            "vested() does not agree with vested_at at late ({})",
+            late
+        );
     }
 }

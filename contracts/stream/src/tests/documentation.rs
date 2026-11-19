@@ -174,3 +174,53 @@ fn interface_snapshot_lists_every_public_entry_point() {
         );
     }
 }
+
+#[test]
+fn readme_resource_table_lists_required_entry_points() {
+    let resource_heading = README
+        .lines()
+        .position(|line| line == "## Resource costs")
+        .expect("README must contain '## Resource costs' section");
+
+    let readme_section = README
+        .lines()
+        .skip(resource_heading)
+        .collect::<std::vec::Vec<_>>();
+
+    // Verify SDK version statement
+    assert!(
+        readme_section
+            .iter()
+            .take(30)
+            .any(|line| line.contains("25.3.2")),
+        "README resource cost section must document the SDK version (25.3.2)"
+    );
+
+    // Parse the table
+    let table_rows: std::vec::Vec<String> = readme_section
+        .iter()
+        .skip_while(|line| !line.starts_with("| Entry point"))
+        .skip(2) // header + separator
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| {
+            let cols: std::vec::Vec<_> = line.split('|').map(str::trim).collect();
+            cols[1].replace('`', "").trim().to_string()
+        })
+        .collect();
+
+    let expected_points = &[
+        "create_stream",
+        "withdraw",
+        "cancel",
+        "get_streams (1 id)",
+        "get_streams (20 ids)",
+    ];
+
+    for point in expected_points {
+        assert!(
+            table_rows.iter().any(|row| row.starts_with(point)),
+            "README resource table is missing entry point '{}'",
+            point
+        );
+    }
+}

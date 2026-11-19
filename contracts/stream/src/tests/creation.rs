@@ -9,7 +9,7 @@ use crate::contract::{StreamContract, StreamContractClient};
 
 use crate::{StreamError, StreamStatus, MAX_AMOUNT};
 
-use super::helpers::StreamTest;
+use super::helpers::{MockTokenWithDecimals, MockTokenWithDecimalsClient, StreamTest};
 
 #[test]
 fn create_stream_locks_funds_and_assigns_id() {
@@ -962,4 +962,201 @@ fn self_stream_is_accepted_and_behaves_normally() {
     // and 500 total from the second stream (250 refund + 250 withdrawal).
     // The contract now holds 500 from the first stream (still unvested).
     assert_eq!(t.token.balance(&t.contract.address), 500);
+}
+
+/// Issue #620 — Streams of tokens with different decimals (0, 7, and 18 decimals)
+/// created side-by-side vest, withdraw, preview, and cancel strictly in base units.
+/// Furthermore, the stream contract is completely decimals-agnostic and never reads
+/// the token's `decimals()` method on any code path.
+#[test]
+fn tokens_with_different_decimals_vest_withdraw_and_cancel_in_base_units() {
+    let t = StreamTest::setup(0);
+
+    // 1. Register three mock tokens with 0, 7, and 18 decimals.
+    let token_0_id = t.env.register(MockTokenWithDecimals, ());
+    let token_0 = MockTokenWithDecimalsClient::new(&t.env, &token_0_id);
+    token_0.initialize(&0);
+    assert_eq!(token_0.decimals(), 0);
+
+    let token_7_id = t.env.register(MockTokenWithDecimals, ());
+    let token_7 = MockTokenWithDecimalsClient::new(&t.env, &token_7_id);
+    token_7.initialize(&7);
+    assert_eq!(token_7.decimals(), 7);
+
+    let token_18_id = t.env.register(MockTokenWithDecimals, ());
+    let token_18 = MockTokenWithDecimalsClient::new(&t.env, &token_18_id);
+    token_18.initialize(&18);
+    assert_eq!(token_18.decimals(), 18);
+
+    // Reset decimals-read tracking so we can assert the stream contract never accesses it.
+    token_0.reset_decimals_read();
+    token_7.reset_decimals_read();
+    token_18.reset_decimals_read();
+
+    // 2. Mint tokens to sender in their respective base units:
+    // - Token 0 (0 decimals): 100 units
+    // - Token 7 (7 decimals): 1_000_000_000 base units (100.0000000)
+    // - Token 18 (18 decimals): 4_000_000_000_000_000_000 base units (4.000000000000000000)
+    //   Note: amounts are bounded by MAX_AMOUNT (i64::MAX as i128 ≈ 9.22 * 10^18 base units).
+    let amount_0: i128 = 100;
+    let amount_7: i128 = 1_000_000_000;
+    let amount_18: i128 = 4_000_000_000_000_000_000;
+
+    token_0.mint(&t.sender, &amount_0);
+    token_7.mint(&t.sender, &amount_7);
+    token_18.mint(&t.sender, &amount_18);
+
+    // 3. Create three streams side by side with identical schedules:
+    // start at 100, cliff at 600 (50% cliff), end at 1100 (duration = 1000s).
+    t.set_time(100);
+
+    let id_0 = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &token_0_id,
+        &amount_0,
+        &100,
+        &1_100,
+        &600,
+    );
+    let id_7 = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &token_7_id,
+        &amount_7,
+        &100,
+        &1_100,
+        &600,
+    );
+    let id_18 = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &token_18_id,
+        &amount_18,
+        &100,
+        &1_100,
+        &600,
+    );
+
+    // Assert funds are locked in the contract in base units.
+    assert_eq!(token_0.balance(&t.sender), 0);
+    assert_eq!(token_0.balance(&t.contract.address), amount_0);
+
+    assert_eq!(token_7.balance(&t.sender), 0);
+    assert_eq!(token_7.balance(&t.contract.address), amount_7);
+
+    assert_eq!(token_18.balance(&t.sender), 0);
+    assert_eq!(token_18.balance(&t.contract.address), amount_18);
+
+    // 4. Before the cliff (at t = 350, 25% elapsed):
+    t.set_time(350);
+    assert_eq!(t.contract.vested(&id_0), 0);
+    assert_eq!(t.contract.withdrawable(&id_0), 0);
+    assert_eq!(t.contract.locked(&id_0), amount_0);
+
+    assert_eq!(t.contract.vested(&id_7), 0);
+    assert_eq!(t.contract.withdrawable(&id_7), 0);
+    assert_eq!(t.contract.locked(&id_7), amount_7);
+
+    assert_eq!(t.contract.vested(&id_18), 0);
+    assert_eq!(t.contract.withdrawable(&id_18), 0);
+    assert_eq!(t.contract.locked(&id_18), amount_18);
+
+    // 5. At the cliff (t = 600, 50% elapsed): exactly 50% has vested in base units.
+    t.set_time(600);
+    assert_eq!(t.contract.vested(&id_0), 50);
+    assert_eq!(t.contract.withdrawable(&id_0), 50);
+    assert_eq!(t.contract.locked(&id_0), 50);
+
+    assert_eq!(t.contract.vested(&id_7), 500_000_000);
+    assert_eq!(t.contract.withdrawable(&id_7), 500_000_000);
+    assert_eq!(t.contract.locked(&id_7), 500_000_000);
+
+    assert_eq!(t.contract.vested(&id_18), 2_000_000_000_000_000_000);
+    assert_eq!(t.contract.withdrawable(&id_18), 2_000_000_000_000_000_000);
+    assert_eq!(t.contract.locked(&id_18), 2_000_000_000_000_000_000);
+
+    // 6. Perform partial withdrawals across all 3 streams:
+    // - Stream 0: withdraw 20 base units
+    // - Stream 7: withdraw full 500_000_000 available base units
+    // - Stream 18: withdraw 1_000_000_000_000_000_000 base units (1 token)
+    let w_0 = t.contract.withdraw_amount(&id_0, &20);
+    assert_eq!(w_0, 20);
+    assert_eq!(token_0.balance(&t.recipient), 20);
+    assert_eq!(token_0.balance(&t.contract.address), 80);
+
+    let w_7 = t.contract.withdraw(&id_7);
+    assert_eq!(w_7, 500_000_000);
+    assert_eq!(token_7.balance(&t.recipient), 500_000_000);
+    assert_eq!(token_7.balance(&t.contract.address), 500_000_000);
+
+    let w_18 = t
+        .contract
+        .withdraw_amount(&id_18, &1_000_000_000_000_000_000);
+    assert_eq!(w_18, 1_000_000_000_000_000_000);
+    assert_eq!(token_18.balance(&t.recipient), 1_000_000_000_000_000_000);
+    assert_eq!(
+        token_18.balance(&t.contract.address),
+        3_000_000_000_000_000_000
+    );
+
+    // 7. Advance time to t = 850 (75% elapsed).
+    // Vested is 75% in base units:
+    // - Stream 0: vested = 75. Withdrawn = 20. Remaining withdrawable = 55. Refund = 25.
+    // - Stream 7: vested = 750_000_000. Withdrawn = 500_000_000. Remaining withdrawable = 250_000_000. Refund = 250_000_000.
+    // - Stream 18: vested = 3_000_000_000_000_000_000. Withdrawn = 1_000_000_000_000_000_000.
+    //              Remaining withdrawable = 2_000_000_000_000_000_000. Refund = 1_000_000_000_000_000_000.
+    t.set_time(850);
+
+    let preview_0 = t.contract.cancel_preview(&id_0);
+    assert_eq!(preview_0.refund, 25);
+    assert_eq!(preview_0.recipient_remaining, 55);
+
+    let preview_7 = t.contract.cancel_preview(&id_7);
+    assert_eq!(preview_7.refund, 250_000_000);
+    assert_eq!(preview_7.recipient_remaining, 250_000_000);
+
+    let preview_18 = t.contract.cancel_preview(&id_18);
+    assert_eq!(preview_18.refund, 1_000_000_000_000_000_000);
+    assert_eq!(preview_18.recipient_remaining, 2_000_000_000_000_000_000);
+
+    // 8. Cancel all three streams and assert settlements in base units.
+    let refund_0 = t.contract.cancel(&id_0);
+    assert_eq!(refund_0, 25);
+    assert_eq!(token_0.balance(&t.sender), 25);
+
+    let refund_7 = t.contract.cancel(&id_7);
+    assert_eq!(refund_7, 250_000_000);
+    assert_eq!(token_7.balance(&t.sender), 250_000_000);
+
+    let refund_18 = t.contract.cancel(&id_18);
+    assert_eq!(refund_18, 1_000_000_000_000_000_000);
+    assert_eq!(token_18.balance(&t.sender), 1_000_000_000_000_000_000);
+
+    // 9. Recipient withdraws remaining vested funds from all three cancelled streams.
+    assert_eq!(t.contract.withdraw(&id_0), 55);
+    assert_eq!(token_0.balance(&t.recipient), 75);
+    assert_eq!(token_0.balance(&t.contract.address), 0);
+
+    assert_eq!(t.contract.withdraw(&id_7), 250_000_000);
+    assert_eq!(token_7.balance(&t.recipient), 750_000_000);
+    assert_eq!(token_7.balance(&t.contract.address), 0);
+
+    assert_eq!(t.contract.withdraw(&id_18), 2_000_000_000_000_000_000);
+    assert_eq!(token_18.balance(&t.recipient), 3_000_000_000_000_000_000);
+    assert_eq!(token_18.balance(&t.contract.address), 0);
+
+    // 10. Assert that no code path read decimals() on any of the three tokens.
+    assert!(
+        !token_0.decimals_were_read(),
+        "decimals() should never be read by the contract for token with 0 decimals"
+    );
+    assert!(
+        !token_7.decimals_were_read(),
+        "decimals() should never be read by the contract for token with 7 decimals"
+    );
+    assert!(
+        !token_18.decimals_were_read(),
+        "decimals() should never be read by the contract for token with 18 decimals"
+    );
 }

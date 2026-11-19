@@ -1,5 +1,10 @@
 # Design: batch stream creation
 
+**Status:** Proposed  
+**Related Issues:** #551  
+**Author:** Design Team  
+**Date:** 2026-10-25
+
 This document proposes `create_streams` for payroll and grant disbursements.
 It is a design only; the existing `create_stream` entry point remains
 unchanged.

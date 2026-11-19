@@ -12,6 +12,7 @@
 //! | `cancellation`    | `cancel`: refunds, freezing, cliff scenarios, lifecycle       |
 //! | `views`           | Read-only queries: `progress`, `locked`, `status`, etc.       |
 //! | `documentation`   | README error-code table and interface snapshot checks         |
+//! | `budget`          | Measured resource costs and budget regression ceilings        |
 //! | `events`          | Event ordering and topic correctness for every entry point    |
 //! | `storage`         | `DataKey` encoding, persistent and instance TTL bumps         |
 //! | `auth`            | Authorization requirements for every mutating entry point     |

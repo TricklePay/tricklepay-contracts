@@ -51,13 +51,25 @@ contract.
 
 ### Changed
 
-- **non-ABI:** Contract limits (`MAX_AMOUNT`, `BPS_SCALE`, `MAX_BATCH_SIZE`)
-  moved to a dedicated `constants` module with documented rationales and
-  re-exported from the crate root in a single statement.
+- **non-ABI:** Added JavaScript SDK invocation, view query, and event decoding examples to the README.
+- **non-ABI:** Added a Mermaid state transition diagram for `StreamStatus` to the README, distinguishing time-driven vs transaction-driven triggers.
+- **non-ABI:** Documented the storage TTL extension split between individual stream views and read-only views (`get_streams`, `cancel_preview`) across storage docs, the threat model, and the README, with a test pinning `get_streams` against TTL decay.
+- **non-ABI:** Standardized the header in `DESIGN_BATCH_STREAM_CREATION.md` and added design document status definitions and a template to `docs/README.md`.
 - **non-ABI:** Embedded contract metadata keys `version` and `repository` are
   now shown by `stellar contract inspect`.
 - Clarified the README around cliff/no-cliff semantics, exact-end withdrawals,
   and cancellation behaviour so stream boundaries are easier to reason about.
+- Removed the one-line private helper `vested_amount_at` in `contract.rs`; call sites
+  in `vested` and `vested_at` now invoke `stream.vested_amount` directly and
+  consistently with other calculation sites.
+- Centralized `Cancelled` event publishing into `events::publish_cancelled` in
+  `events.rs`, aligning cancellation publishing with `publish_created` and `publish_withdrawn`.
+- Documented JSON-RPC `getEvents` filter examples for `Created` (by sender and by recipient),
+  `Withdrawn` (by recipient), and `Cancelled` (by sender) in `README.md`, including
+  topic XDR base64 symbols, ledger retention windows, and pagination cursor semantics.
+- Documented instruction, memory, and ledger entry resource costs per entry point
+  in `README.md` measured against `soroban-sdk = "=25.3.2"`, with regression test ceilings
+  enforced in `tests/budget.rs`.
 
 ### Added
 
@@ -126,6 +138,18 @@ end_time, cliff_time) → u64` — opens a new stream, pulls the full
 - **ABI:** `max_amount() → i128` — returns the maximum amount accepted by
   `create_stream`, so clients can validate against the deployed contract.
   Added 2026-10-20.
+
+- **ABI:** `cancel_preview(id) → Settlement` — returns the settlement amounts
+  (`refund` to sender and `recipient_remaining` to recipient) that a `cancel` call
+  at the current ledger time would produce, without modifying contract state or
+  publishing events. Added 2026-10-25.
+
+- **ABI:** `get_streams(ids) → Vec<Option<Stream>>` — reads up to `MAX_BATCH_SIZE`
+  (20) stream records in request order, returning `None` for unknown or expired
+  ids, without modifying storage or publishing events. Added 2026-10-25.
+
+- **ABI:** `MAX_BATCH_SIZE: u32 = 20` — constant defining the maximum number of
+  stream ids that `get_streams` accepts in a single call. Added 2026-10-25.
 
 ### Changed
 
