@@ -580,6 +580,7 @@ function was called. It lives in two places:
 | `cancellation.rs` | `cancel`: the vested/refund split, boundary timing (start, cliff, end), rejecting a second cancel or one after completion | `cancel_refunds_unvested_and_preserves_vested`, `cancel_with_cliff_not_reached`, `cancel_on_stream_at_end_time_is_rejected`, `test_repeated_cancel_fails` |
 | `views.rs`        | Read-only queries, including timestamp projections, stream existence, and the amount ceiling; no state or event side effects | `vested_at_projects_the_schedule_and_freezes_after_cancellation`, `stream_exists_reports_existing_unknown_cancelled_and_completed_streams`, `max_amount_view_returns_i64_max` |
 | `documentation.rs` | README error-code table matches every `StreamError` variant and code | `readme_error_table_matches_stream_error_variants_and_codes` |
+| `budget.rs`       | Measured resource costs and budget regression ceilings for `create_stream`, `withdraw`, `cancel`, and batch reads | `create_stream_resource_budget_stays_within_ceiling`, `withdraw_resource_budget_stays_within_ceiling`, `cancel_resource_budget_stays_within_ceiling`, `get_streams_batch_20_ids_resource_budget_stays_within_ceiling` |
 | `events.rs`       | Event ordering and topic correctness for every entry point, and silence on a rejected call        | `create_emits_created_after_the_funding_transfer`, `lifecycle_events_follow_operation_order`, `created_event_topics_index_sender_and_recipient`, `rejected_create_publishes_no_events` |
 | `storage.rs`      | `DataKey` encoding across the id range, and persistent/instance TTL bumps on both sides of `BUMP_THRESHOLD` | `stream_ids_map_to_distinct_persistent_keys`, `a_stream_entry_ttl_decays_with_the_ledger_sequence`, `withdrawing_restores_a_decayed_stream_ttl`, `view_calls_do_not_extend_the_instance_ttl` |
 | `auth.rs`         | Authorization requirements for every mutating entry point                                         | `withdraw_requires_recipient_authorization`, `cancel_requires_sender_authorization`, `test_third_party_cannot_mutate_streams`              |
@@ -1026,6 +1027,47 @@ The `Cancelled` event defines topics `[symbol("cancelled"), sender]`:
   cursor via `"pagination": { "cursor": "<cursor>", "limit": 100 }`. When `cursor`
   is provided, `startLedger` **must be omitted** in subsequent continuation requests,
   as the cursor uniquely encodes the ledger sequence and event offset.
+
+## Resource costs
+
+Integrators pay Soroban resource fees based on CPU instruction execution, RAM
+allocation, and persistent ledger storage footprint. The figures below reflect
+measured resource consumption in the local test environment using Soroban SDK
+`25.3.2` (Stellar protocol 22/23 test environment).
+
+### Measured resource usage
+
+| Entry point | CPU instructions | Memory (bytes) | Read entries | Write entries | Operations & Footprint |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
+| `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
+| `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
+| `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
+| `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
+| `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
+| `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
+
+\* *`get_stream` (and other individual view queries) does not write stream data, but
+issues a TTL extension entry if remaining entry lifetime has decayed below
+`BUMP_THRESHOLD` (103,680 ledgers). In contrast, batch reads (`get_streams`) and
+simulation queries (`cancel_preview`) deliberately use `storage::get_stream_readonly`
+and never write state or extend TTL.*
+
+### Measurement method and environment
+
+- **SDK version:** Soroban SDK `25.3.2` with native testing utilities enabled
+  (`features = ["testutils"]`).
+- **CPU & Memory:** Measured via `env.cost_estimate().budget().cpu_instruction_cost()`
+  and `env.cost_estimate().budget().memory_bytes_cost()`, capturing the CPU
+  instruction cycles and memory byte allocations across the host invocation.
+- **Ledger entries:** Metered via `env.cost_estimate().resources()`, counting total
+  accessed entries (`disk_read_entries + memory_read_entries`) and modified entries
+  (`write_entries`).
+- **Regression test suite:** To prevent silent resource bloat, the contract test
+  suite includes dedicated budget ceiling assertions in
+  [`tests/budget.rs`](contracts/stream/src/tests/budget.rs). Each test verifies that
+  execution stays within conservative ceilings and prints the measured value upon
+  failure so that limits can only be raised deliberately.
 
 ## Reading the contract interface
 
