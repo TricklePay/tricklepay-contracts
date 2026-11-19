@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help size size-budget
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -49,6 +49,10 @@ wasm-hash: ## Build the WASM with the locked dependencies and print its SHA-256 
 
 size: wasm ## Report the compiled contract's WASM size (builds it first if needed).
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
+
+.PHONY: size-budget
+size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
+	./scripts/check-wasm-size.sh
 
 test: ## Run the full test suite.
 	cargo test

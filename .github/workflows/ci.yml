@@ -61,6 +61,12 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Lint shell scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          make lint-scripts
+
       - name: Check Markdown links
         run: python3 scripts/check-markdown-links.py
 
@@ -69,6 +75,47 @@ jobs:
 
       - name: Build WASM
         run: cargo build --locked --release --target wasm32v1-none
+
+      - name: Summarize WASM artifact
+        if: always()
+        run: |
+          wasm="target/wasm32v1-none/release/tricklepay_stream.wasm"
+          {
+            echo "### WASM artifact"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            if [[ -f "$wasm" ]]; then
+              if command -v sha256sum >/dev/null 2>&1; then
+                hash="$(sha256sum "$wasm" | awk '{print $1}')"
+              else
+                hash="$(shasum -a 256 "$wasm" | awk '{print $1}')"
+              fi
+              size="$(wc -c < "$wasm" | tr -d ' ')"
+              echo "| SHA-256 | \`sha256:${hash}\` |"
+              echo "| Size | ${size} bytes |"
+            else
+              echo "| SHA-256 | artifact not built |"
+              echo "| Size | artifact not built |"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Stellar CLI
+        env:
+          STELLAR_CLI_VERSION: "25.2.0"
+        run: |
+          archive="stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/${archive}" -o "$RUNNER_TEMP/${archive}"
+          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/stellar" "$HOME/.cargo/bin/stellar"
+          stellar version
+
+      - name: Check interface snapshot
+        run: ./scripts/diff-interface.sh
+
+      - name: Check WASM size budget
+        run: ./scripts/check-wasm-size.sh
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
