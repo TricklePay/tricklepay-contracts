@@ -1,14 +1,37 @@
 # cargo audit config
-# This file makes `cargo audit --deny warnings` pass without CLI --ignore flags.
+# This file makes `cargo audit --deny warnings --file .cargo/audit.toml` pass
+# without CLI --ignore flags.
 # See https://github.com/RustSec/cargo-audit/blob/main/audit.toml.example
 #
-# The ignored advisories are transitive Soroban test-host dependencies and are
-# NOT used in the deployed WASM. Vulnerability advisories remain enabled.
+# The ignored advisories are transitive Soroban test-host or dev-tool
+# dependencies and are NOT used in the deployed WASM.
 
 [advisories]
-ignore = ["RUSTSEC-2024-0388", "RUSTSEC-2024-0436"]
+ignore = [
+  # Unmaintained (via ark-* / wasmi_core -> soroban-env-host).
+  "RUSTSEC-2024-0388", # derivative 2.2.0
+  "RUSTSEC-2024-0436", # paste 1.0.15
+  "RUSTSEC-2026-0543", # chrono 0.4.45
+  # Test-host only: soroban-env-host -> elliptic-curve -> crypto-bigint 0.5.5.
+  # The patched 0.7.x line cannot be selected until soroban-env-host moves.
+  "RUSTSEC-2026-0387",
+  # Unsoundness in heapless 0.8, pulled by soroban-sdk -> stellar-strkey.
+  # The 0.9.x patch line is semver-incompatible with the SDK's dependency.
+  "RUSTSEC-2026-0574",
+  "RUSTSEC-2026-0575",
+  "RUSTSEC-2026-0576",
+  "RUSTSEC-2026-0577",
+  "RUSTSEC-2026-0578",
+  "RUSTSEC-2026-0579",
+  "RUSTSEC-2026-0580",
+  "RUSTSEC-2026-0581",
+  "RUSTSEC-2026-0582",
+]
 # RUSTSEC-2024-0388: `derivative` 2.2.0 unmaintained (via ark-* -> soroban-env-host)
 # RUSTSEC-2024-0436: `paste` 1.0.15 unmaintained (via ark-ff/wasmi_core -> soroban-env-host)
+# RUSTSEC-2026-0543: `chrono` 0.4.45 is unmaintained; no patched release exists.
+# RUSTSEC-2026-0387: crypto-bigint is test-host only and not in the deployed WASM.
+# RUSTSEC-2026-0574..0582: heapless 0.8 unsoundness; the SDK pins the 0.8 line.
 
 [yanked]
 enabled = false

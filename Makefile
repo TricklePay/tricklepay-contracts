@@ -75,7 +75,7 @@ docs: ## Build crate documentation, treating warnings as errors.
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 audit: ## Audit dependencies for known vulnerabilities.
-	cargo audit --deny warnings --file .cargo/audit.toml
+	cargo audit --deny warnings
 
 clean: ## Remove build artifacts.
 	cargo clean
