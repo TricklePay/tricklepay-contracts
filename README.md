@@ -1,5 +1,8 @@
 # TricklePay Contracts
 
+[![CI](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Soroban smart contracts for TricklePay, a token streaming protocol on Stellar.
 
 A stream locks a sum of tokens from a sender and releases them to a recipient
@@ -44,6 +47,16 @@ build, or host behavior exercised by tests. Review the SDK release notes,
 update the workspace pin, and run the full test and lint suite. Also rebuild
 and inspect the contract interface and WASM artifact before deployment, since
 SDK changes can affect the contract ABI or what the Soroban host accepts.
+
+### Pinned Stellar CLI version
+
+The contract tools and scripts expect Stellar CLI version `25.2.0` to ensure protocol and XDR alignment with Soroban SDK `25.3.2`. Install the pinned CLI version with:
+
+```bash
+cargo install --locked stellar-cli --version 25.2.0
+```
+
+> **Compatibility Note:** CLI major and minor versions must align with the target Soroban SDK. Using a newer or mismatched Stellar CLI version can cause CLI flag deprecation warnings or XDR type parsing errors during inspection and deployment.
 
 ## How a stream works
 
@@ -433,6 +446,7 @@ reassigned.
 | 11   | `StreamWindowInPast`      | `end_time` is not in the future at stream creation — the window would be entirely in the past, making the stream 100 % vested immediately (use a direct token transfer instead).                                  |
 | 12   | `StreamCountExhausted`    | The stream id counter has reached `u64::MAX` and cannot increment further without wrapping (which would overwrite existing streams). No further streams can be created on this contract instance.                 |
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
+| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` (20) stream ids in a single request.                                                                                        |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as
@@ -486,6 +500,7 @@ All common contributor tasks are wrapped in the `Makefile`. Run `make` (or
   fmt-check  Verify formatting without modifying files (used in CI).
   lint       Lint every target and treat warnings as errors (cargo clippy -D warnings).
   lint-scripts  Check shell syntax and lint scripts with ShellCheck.
+  size-budget  Fail when the compiled WASM exceeds wasm-size-budget.txt.
   audit      Audit dependencies for known vulnerabilities (cargo audit --deny warnings).
   clean      Remove build artifacts (cargo clean).
   deploy     Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
@@ -499,6 +514,7 @@ make test           # run the test suite only
 make fmt            # auto-format all Rust source files
 make wasm           # produce the release WASM ready for deployment
 make lint-scripts   # check scripts/*.sh with bash -n and ShellCheck
+make size-budget    # check the WASM against wasm-size-budget.txt
 make audit          # check for vulnerable or unmaintained dependencies
 make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
 ```
@@ -514,6 +530,26 @@ The release profile keeps Rust overflow checks enabled. This makes arithmetic
 such as `stream.withdrawn += amount` abort on overflow instead of wrapping, so
 removing `overflow-checks = true` would remove a safety check from contract
 balance updates.
+
+### Running CI checks locally and pre-push hook
+
+`scripts/ci.sh` runs formatting, clippy lints, and tests exactly as CI does, exiting non-zero on the first failure:
+
+```bash
+./scripts/ci.sh
+```
+
+To run these checks automatically before pushing, wire the script into a Git `pre-push` hook:
+
+```bash
+ln -s ../../scripts/ci.sh .git/hooks/pre-push
+```
+
+Or on Windows / PowerShell:
+
+```powershell
+cp scripts/ci.sh .git/hooks/pre-push
+```
 
 ### Reading the test suite
 
@@ -579,11 +615,15 @@ ls -la target/wasm32v1-none/release/tricklepay_stream.wasm
 wc -c < target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
-**Current size:** as of 2026-10-22 (commit `f03a6e5`), the release WASM built from this source is **47,991 bytes** (≈ 48 KB). This figure changes with the Rust toolchain version and with the length of doc comments, so a build on a different toolchain can differ slightly without anything being wrong. There is no enforced ceiling checked in CI, so
-this number is a reference point, not a budget — treat a jump that isn't
-explained by an intentional feature addition as a regression worth
-investigating before merging, the same way `make audit` and `make check`
-surface other classes of regressions.
+**Size budget:** CI builds the release WASM and fails when it exceeds the
+value in [`wasm-size-budget.txt`](wasm-size-budget.txt) (currently 45,000
+bytes). The same check runs locally with `make size-budget`. Raising the
+budget is an intentional edit that belongs in the same pull request as the
+change that grows the binary. The size still changes with the Rust toolchain
+version and with the length of doc comments, so small differences between
+local and CI builds are expected; a jump that isn't explained by an
+intentional feature addition is a regression worth investigating before
+merging.
 
 ## Implementation details
 
@@ -910,7 +950,7 @@ stellar contract info interface \
   --network <NETWORK>
 ```
 
-The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli).
+The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.2.0` for compatibility with Soroban SDK `25.3.2`.
 To reproduce a deployment artifact, use the same exact Rust compiler version
 and target that were used to build the deployed WASM.
 
@@ -1005,7 +1045,7 @@ the `wasm32v1-none` target:
 ```bash
 rm -f target/wasm32-unknown-unknown/release/tricklepay_stream.wasm
 cargo build --locked --release --target wasm32v1-none
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust
 ```
 
 Do not rename a `wasm32-unknown-unknown` artifact to make it look like the

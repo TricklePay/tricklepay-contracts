@@ -159,6 +159,9 @@ end_time, cliff_time) → u64` — opens a new stream, pulls the full
   - As `token` the call aborted at the host level with no typed error, because
     this contract exposes no `transfer` entry point.
 
+- **ABI:** `StreamError::BatchTooLarge`, error code `14`. Returned by `get_streams`
+  when more than `MAX_BATCH_SIZE` (20) stream ids are requested in a single call.
+
 ### Changed
 
 - `create_stream` now rejects a stream whose `sender` and `recipient` are the
@@ -231,3 +234,6 @@ end_time, cliff_time) → u64` — opens a new stream, pulls the full
 | 9    | `StreamAlreadyCompleted` | Active  |
 | 10   | `AmountTooLarge`         | Active  |
 | 11   | `StreamWindowInPast`     | Active  |
+| 12   | `StreamCountExhausted`   | Active  |
+| 13   | `InvalidParticipant`     | Active  |
+| 14   | `BatchTooLarge`          | Active  |

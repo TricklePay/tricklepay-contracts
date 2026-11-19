@@ -3,15 +3,21 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy verify-deployment check-manifest check-markdown-links test-markdown-links snapshot help
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
 
 # Check the release overflow setting and the built contract interface.
 # Use this before opening a pull request.
-all check: check-manifest fmt-check lint test audit
+all check: check-release-overflow check-manifest fmt-check lint test audit
 	./scripts/diff-interface.sh
+
+check-release-overflow: ## Verify [profile.release] sets overflow-checks = true in Cargo.toml.
+	./scripts/check-release-overflow.sh
+
+test-release-overflow: ## Run unit tests for scripts/check-release-overflow.sh.
+	python3 scripts/test_check_release_overflow.py
 
 check-manifest: ## Verify Cargo manifests parse without resolving remote dependencies.
 	cargo metadata --no-deps --locked
@@ -23,11 +29,11 @@ test-markdown-links: ## Run unit tests for scripts/check-markdown-links.py.
 	python3 scripts/test_check_markdown_links.py
 
 snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
-	stellar contract inspect --wasm $(WASM) > docs/interface.txt
+	stellar contract info interface --wasm $(WASM) --output rust > docs/interface.txt
 
 # Native debug build.
 build: ## Native debug build.
-	cargo build
+	cargo build --locked
 
 wasm: ## Optimised WASM artifact for deployment.
 	cargo build --locked --release --target $(WASM_TARGET)
@@ -50,8 +56,12 @@ wasm-hash: ## Build the WASM with the locked dependencies and print its SHA-256 
 size: wasm ## Report the compiled contract's WASM size (builds it first if needed).
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
 
+.PHONY: size-budget
+size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
+	./scripts/check-wasm-size.sh
+
 test: ## Run the full test suite.
-	cargo test
+	cargo test --locked
 
 fmt: ## Format the workspace in place.
 	cargo fmt
@@ -60,22 +70,23 @@ fmt-check: ## Verify formatting without modifying files (used in CI).
 	cargo fmt --check
 
 lint: ## Lint every target and treat warnings as errors.
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --locked --all-targets -- -D warnings
 
 .PHONY: lint-scripts
 lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
+	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
 		echo "Error: ShellCheck is required. Install it with 'brew install shellcheck' or 'apt install shellcheck'." >&2; \
-		exit 1; \
+	else \
+		shellcheck scripts/*.sh; \
 	fi
-	@set -e; for script in scripts/*.sh; do bash -n "$$script"; done
-	shellcheck scripts/*.sh
 
+.PHONY: docs
 docs: ## Build crate documentation, treating warnings as errors.
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
 audit: ## Audit dependencies for known vulnerabilities.
-	cargo audit --deny warnings --file .cargo/audit.toml
+	cargo audit --deny warnings
 
 clean: ## Remove build artifacts.
 	cargo clean

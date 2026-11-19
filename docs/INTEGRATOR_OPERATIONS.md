@@ -68,7 +68,7 @@ decoder, or contract address allowlist entry. Before deployment, compare the
 interface with:
 
 ```bash
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust
 ```
 
 ## Recommended Client Retry Behavior
@@ -147,8 +147,10 @@ own.
   contract rather than trying to reconstruct history that was never observed.
 - Periodically compare the highest stream id the indexer has recorded against
   `stream_count()`. Any gap means ids exist on-chain with no local `Created`
-  record, and should be backfilled with `get_stream` for each missing id
-  rather than treated as out of scope.
+  record, and should be backfilled with `get_stream` (or `get_streams` in
+  batches of up to 20; see
+  [Dashboard Guidance for get_streams](#dashboard-guidance-for-getstreams))
+  for each missing id rather than treated as out of scope.
 - `get_stream`, `withdrawable`, `vested`, `locked`, `progress`, and `status`
   require no authorization and always reflect current on-chain state
   regardless of how complete the local event history is (see
@@ -204,6 +206,126 @@ what is stored from what is computed at read time:
   countdown, or a vested-amount display belongs on a value recomputed on
   every render, not one backfilled from the last event the indexer happened
   to see.
+
+## Dashboard Guidance for get_streams
+
+User-facing dashboards and portal applications frequently display streams in lists: active streams belonging to an account, outgoing payroll runs, or recent transactions. Querying streams individually using `get_stream(id)` introduces an N+1 query problem, requiring one network round-trip per stream and quickly exhausting RPC rate limits.
+
+The contract provides `get_streams(ids: Vec<u64>) -> Result<Vec<Option<Stream>>, StreamError>` to batch up to 20 stream lookups into a single call.
+
+### Chunking and Batching Requests
+
+`get_streams` enforces a hard limit of `MAX_BATCH_SIZE = 20` stream IDs per request. When a dashboard displays more than 20 streams, the client must chunk the list of IDs into slices of at most 20 IDs.
+
+The return value is a vector of `Option<Stream>` of the exact same length and in the exact same order as the requested `ids`:
+- A found stream is returned as `Some(stream)`.
+- An unknown, non-existent, or archived stream is returned as `None` at that position. The call does **not** fail if an ID is missing.
+
+#### Worked Example: Batching, Chunking, and Splitting on Error
+
+The following client helper demonstrates chunking an arbitrary list of stream IDs into batches of at most 20, querying `get_streams`, handling `None` entries, and recovering from `BatchTooLarge` by subdividing:
+
+```typescript
+import { Stream, StreamError } from "@tricklepay/sdk";
+
+const MAX_BATCH_SIZE = 20;
+
+/**
+ * Fetch multiple streams in batches of up to 20.
+ *
+ * If a batch returns StreamError.BatchTooLarge (code 14), it splits
+ * the batch in half and retries each slice.
+ */
+async function fetchStreamsBatched(
+  client: StreamClient,
+  streamIds: bigint[]
+): Promise<Map<bigint, Stream | null>> {
+  const results = new Map<bigint, Stream | null>();
+
+  // Helper to process a single slice of IDs
+  async function fetchChunk(chunk: bigint[]): Promise<void> {
+    if (chunk.length === 0) return;
+
+    try {
+      const records = await client.get_streams({ ids: chunk });
+      for (let i = 0; i < chunk.length; i++) {
+        const id = chunk[i];
+        const record = records[i] ?? null;
+        results.set(id, record);
+      }
+    } catch (err: any) {
+      // If code 14 (BatchTooLarge) is encountered, split and retry
+      if (err?.code === 14 || err?.name === "BatchTooLarge") {
+        if (chunk.length === 1) {
+          throw new Error(`Single stream ID ${chunk[0]} returned BatchTooLarge`);
+        }
+        const mid = Math.floor(chunk.length / 2);
+        await fetchChunk(chunk.slice(0, mid));
+        await fetchChunk(chunk.slice(mid));
+        return;
+      }
+      throw err;
+    }
+  }
+
+  // Chunk all requested stream IDs into slices of at most 20
+  for (let i = 0; i < streamIds.length; i += MAX_BATCH_SIZE) {
+    const chunk = streamIds.slice(i, i + MAX_BATCH_SIZE);
+    await fetchChunk(chunk);
+  }
+
+  return results;
+}
+```
+
+### Failure Modes and Retry Behavior
+
+1. **`StreamError::BatchTooLarge` (code `14`)**:
+   - **Trigger:** Calling `get_streams` with `ids.len() > 20`.
+   - **Retry behavior:** Do **not** retry with the same argument. The failure is deterministic and immediate. Subdivide the batch into smaller chunks (for example, halve the chunk size to 10) and submit each half separately.
+2. **Missing or archived streams (`None` entries)**:
+   - **Trigger:** Passing a stream ID that does not exist in storage or whose persistent storage entry expired past its TTL window.
+   - **Retry behavior:** Do not treat `None` as a fatal RPC or batch error. The client should filter out `None` values or display an indicator (e.g., "Archived or not found"). If an active stream expired, it can be restored on-chain via a Soroban restore transaction before re-querying.
+3. **Transient network or RPC errors**:
+   - **Trigger:** Dropped HTTP connection, RPC timeout, or rate-limit responses (HTTP 429 / 5xx).
+   - **Retry behavior:** `get_streams` is a read-only view that does not write contract state, alter balances, or extend storage TTLs. It is completely safe to retry immediately using exponential backoff and jitter. Unlike mutating entry points (`withdraw`, `create_stream`), retrying a view cannot produce duplicate side effects.
+4. **Storage TTL note**:
+   - `get_streams` reads entries with `storage::get_stream_readonly`, which does **not** extend the stream's TTL (`ENTRY_TTL`). Dashboards reading streams periodically cannot rely on `get_streams` to prevent stream archival; participants or maintainers must use mutating transactions or single `get_stream(id)` calls to bump storage TTL.
+
+### Computing Derived Figures Client-Side
+
+Each returned `Stream` record contains only the immutable schedule facts and current withdrawal counter: `total_amount`, `withdrawn`, `start_time`, `end_time`, `cliff_time`, and `cancelled`.
+
+Dashboards should **not** invoke individual view entry points (`vested`, `withdrawable`, `locked`, `progress`, `status`) over RPC for every stream in the batch. Doing so would turn a single batch call into $5 \times N$ additional network round-trips. Instead, compute all live figures client-side from the returned `Stream` record and the current ledger timestamp (`now = env.ledger().timestamp()` or local clock synced to network ledger close time).
+
+The formulas match the contract's on-chain arithmetic exactly:
+
+- **Vested amount (`vested`):**
+  Linear vesting with integer division truncation (see [README.md § Rounding direction](../README.md#rounding-direction) and [README.md § Integer rounding](../README.md#integer-rounding)):
+  - If $\text{now} < \text{cliff\_time}$ or $\text{now} < \text{start\_time}$, $\text{vested} = 0$.
+  - If $\text{now} \ge \text{end\_time}$, $\text{vested} = \text{total\_amount}$.
+  - Otherwise, $\text{vested} = \lfloor \frac{\text{total\_amount} \times (\text{now} - \text{start\_time})}{\text{end\_time} - \text{start\_time}} \rfloor$.
+  Implemented in [`contracts/stream/src/vesting.rs`](../contracts/stream/src/vesting.rs).
+
+- **Withdrawable balance (`withdrawable`):**
+  $$\text{withdrawable} = \max(\text{vested} - \text{withdrawn}, 0)$$
+  Implemented in [`contracts/stream/src/vesting.rs`](../contracts/stream/src/vesting.rs).
+
+- **Locked amount (`locked`):**
+  The unvested remainder of the schedule (see [README.md § locked: a precise figure, not a synonym for "still escrowed"](../README.md#locked-a-precise-figure-not-a-synonym-for-still-escrowed)):
+  $$\text{locked} = \max(\text{total\_amount} - \text{vested}, 0)$$
+
+- **Vesting progress in basis points (`progress`):**
+  $$\text{progress} = \lfloor \frac{\text{vested} \times 10\,000}{\text{total\_amount}} \rfloor \quad (\text{range } [0, 10\,000])$$
+
+- **Lifecycle status (`status`):**
+  Following the precedence in [`contracts/stream/src/status.rs`](../contracts/stream/src/status.rs):
+  - If $\text{stream.cancelled}$ is true, status is $\text{Cancelled}$.
+  - Else if $\text{now} < \text{start\_time}$, status is $\text{Pending}$.
+  - Else if $\text{now} \ge \text{end\_time}$, status is $\text{Completed}$.
+  - Otherwise, status is $\text{Streaming}$.
+
+Recomputing these values client-side costs virtually nothing, allows smooth real-time progress animations, and keeps the dashboard resilient against network latency.
 
 ## Withdrawing Before Anything Has Vested
 

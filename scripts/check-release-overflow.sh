@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Verifies that [profile.release] sets overflow-checks = true.
+# Note: Removing overflow-checks = true or changing it to false from Cargo.toml's
+# [profile.release] table causes this script to fail with exit code 1.
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"

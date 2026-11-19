@@ -58,6 +58,13 @@ close first, not something to explain away in the engagement kickoff call.
       current `transfer` helper in
       [`contract.rs`](../contracts/stream/src/contract.rs) before an auditor
       does.
+- [ ] **Read-only views and preview mechanics match
+      [THREAT_MODEL.md § Batch reads and cancellation previews](../THREAT_MODEL.md#batch-reads-and-cancellation-previews).**
+      `get_streams` bounds batch sizes to 20 to protect host footprint limits
+      and neither `get_streams` nor `cancel_preview` mutates state or extends
+      TTL. Verify that client applications treat cancellation previews as
+      instantaneous estimates subject to ledger time advancement rather than
+      guaranteed quotes.
 - [ ] **Every `StreamError` variant is accounted for in the threat model or
       the integrator docs.** Lives in
       [`contracts/stream/src/error.rs`](../contracts/stream/src/error.rs).

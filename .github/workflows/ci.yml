@@ -4,24 +4,75 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run weekly on Sunday at midnight UTC to catch upstream toolchain or dependency drift early
+  schedule:
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  check:
+  fmt:
+    name: Check formatting
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # Convention: pin actions to full commit SHAs so CI only runs reviewed
       # action code; refresh these pins intentionally when updating actions.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup component add rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+  clippy:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
-          rustup component add rustfmt clippy
+          rustup component add clippy
           rustup target add wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-audit (prebuilt)
+        env:
+          CARGO_AUDIT_VERSION: "0.23.0"
+        run: |
+          archive="cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}.tgz"
+          curl -sSfL "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${CARGO_AUDIT_VERSION}/${archive}" -o "$RUNNER_TEMP/${archive}"
+          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/cargo-audit-x86_64-unknown-linux-gnu-v${CARGO_AUDIT_VERSION}/cargo-audit" "$HOME/.cargo/bin/cargo-audit"
+          cargo audit --version
+
+  test:
+    name: Native tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -30,29 +81,93 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
-      - name: Audit dependencies
-        run: cargo audit --deny warnings
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Test
         run: cargo test --locked
 
+      - name: Lint shell scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          make lint-scripts
+
+      - name: Check Markdown links
+        run: python3 scripts/check-markdown-links.py
+
+      - name: Test the Markdown link checker
+        run: python3 scripts/test_check_markdown_links.py
+
       - name: Build WASM
         run: cargo build --locked --release --target wasm32v1-none
 
+      - name: Summarize WASM artifact
+        if: always()
+        run: |
+          wasm="target/wasm32v1-none/release/tricklepay_stream.wasm"
+          {
+            echo "### WASM artifact"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            if [[ -f "$wasm" ]]; then
+              if command -v sha256sum >/dev/null 2>&1; then
+                hash="$(sha256sum "$wasm" | awk '{print $1}')"
+              else
+                hash="$(shasum -a 256 "$wasm" | awk '{print $1}')"
+              fi
+              size="$(wc -c < "$wasm" | tr -d ' ')"
+              echo "| SHA-256 | \`sha256:${hash}\` |"
+              echo "| Size | ${size} bytes |"
+            else
+              echo "| SHA-256 | artifact not built |"
+              echo "| Size | artifact not built |"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Stellar CLI
+        env:
+          STELLAR_CLI_VERSION: "25.2.0"
+        run: |
+          archive="stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/${archive}" -o "$RUNNER_TEMP/${archive}"
+          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/stellar" "$HOME/.cargo/bin/stellar"
+          stellar version
+
+      - name: Check interface snapshot
+        run: ./scripts/diff-interface.sh
+
+      - name: Check WASM size budget
+        run: ./scripts/check-wasm-size.sh
+
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: tricklepay_stream-${{ github.sha }}
           path: target/wasm32v1-none/release/tricklepay_stream.wasm
           retention-days: 90
+
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build documentation
+        run: cargo doc --locked --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

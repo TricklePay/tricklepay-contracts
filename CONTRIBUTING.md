@@ -23,8 +23,11 @@ Prerequisites:
   the toolchain and target with [rustup](https://rustup.rs). The reproducible
   WASM build instructions were verified with Rust 1.96.0, so record and use the
   same compiler version when reproducing a deployment build.
-- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)**, only
-  needed if you deploy the contract to a network.
+- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)** (`stellar-cli`), pinned to version `25.2.0` to match Soroban SDK `25.3.2` compatibility. Install the pinned version with:
+  ```bash
+  cargo install --locked stellar-cli --version 25.2.0
+  ```
+  Only needed if you plan to deploy to a network, run `make snapshot`, or run `make verify-deployment`. Using an unpinned or mismatched CLI version can cause CLI flag drift or XDR decoding errors.
 
 Clone and build:
 
@@ -40,8 +43,8 @@ All of the following must pass before opening a pull request:
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
 cargo audit --deny warnings
 bash ./scripts/check-release-overflow.sh
 ./scripts/diff-interface.sh
@@ -79,7 +82,16 @@ The table below lists every target defined in the `Makefile`, along with its pur
 | `verify-deployment` | Compares a deployed on-chain contract's WASM hash against the local build (`./scripts/verify-deployment.sh $(CONTRACT_ID) $(NETWORK)`). | Run to verify deployment integrity on a network. |
 
 CI runs the same checks on every push and pull request. The audit command uses the
-allowlist in `.cargo/audit.toml`.
+allowlist in `.cargo/audit.toml`. CI also runs the Markdown link checker and its
+unit tests with the runner's Python:
+
+```bash
+python3 scripts/check-markdown-links.py
+python3 scripts/test_check_markdown_links.py
+```
+
+The workflow declares `permissions: contents: read`. New jobs must add only the
+permissions they actually need rather than relying on the repository default.
 
 The vesting and status property tests use Proptest's default 256 cases per
 property. To run more cases before a release or after changing property-tested
@@ -105,7 +117,7 @@ example `cargo test vested_between_zero_and_total`.
 If you intentionally changed the contract interface, update the snapshot before opening your PR:
 ```bash
 make wasm
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm > docs/interface.txt
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust > docs/interface.txt
 ```
 The equivalent target is `make snapshot`. Run `make check-markdown-links` when
 changing documentation, and use `./scripts/verify-deployment.sh CONTRACT_ID=C... NETWORK=testnet`
@@ -116,8 +128,9 @@ to compare a deployment with the local build.
 Rustdoc comments on `#[contractimpl]` items, `#[contracttype]` types, and
 `#[contracterror]` errors are included in the deployed WASM spec. They increase
 the binary size and deployment fee, so keep them concise. Use `make size` to
-check the binary size and `make snapshot` to inspect and update the interface
-snapshot.
+check the binary size, `make size-budget` to check it against
+[`wasm-size-budget.txt`](wasm-size-budget.txt), and `make snapshot` to inspect
+and update the interface snapshot.
 
 ## Testing
 
@@ -299,8 +312,10 @@ and `assert_latest_stream_event_topics` compares the latest event's topics and
 data against an expected `ContractEvent`.
 
 When you are done, run the required checks above — `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings`, and `cargo test`, or
-`make check` for all three — before opening the pull request.
+`cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked`, or
+`make check` (which runs manifest verification, code formatting, clippy linting,
+unit tests, dependency audit, markdown link checks, script linting, and interface
+diff verification) — before opening the pull request.
 
 ## Commit messages
 
@@ -390,9 +405,9 @@ fixed schedule.
 
 ### Cutting and tagging a release
 
-1. Confirm `main` is green: `make check` (formatting, lint, tests, audit)
-   plus `./scripts/diff-interface.sh`, so the committed `docs/interface.txt`
-   matches a fresh `make wasm` build.
+1. Confirm `main` is green: `make check` (manifest, formatting, lint, tests, audit,
+   markdown link checks, script linting, and interface diff), so the committed
+   `docs/interface.txt` matches a fresh `make wasm` build.
 2. Pick the version number under
    [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a breaking
    interface change (see
