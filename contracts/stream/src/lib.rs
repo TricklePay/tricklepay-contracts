@@ -1,4 +1,7 @@
 #![no_std]
+// Deny unsafe code rather than forbid because the `#[contract]` macro on
+// `StreamContract` generates code under `#[allow(unsafe_code)]`, which causes
+// compiler error E0453 when forbidden.
 #![deny(unsafe_code)]
 
 //! TricklePay stream contract.
@@ -63,9 +66,9 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
 /// Basis-points denominator used by [`StreamContract::progress`].
 pub use contract::BPS_SCALE;
+pub use contract::{StreamContract, StreamContractClient, MAX_AMOUNT, MAX_BATCH_SIZE};
 pub use error::StreamError;
 pub use types::{Stream, StreamStatus};
 

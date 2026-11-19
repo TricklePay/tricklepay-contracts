@@ -47,6 +47,9 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Check release overflow setting
+        run: ./scripts/check-release-overflow.sh
+
       - name: Build WASM
         run: cargo build --locked --release --target wasm32v1-none
 
