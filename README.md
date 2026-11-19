@@ -1,5 +1,8 @@
 # TricklePay Contracts
 
+[![CI](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TricklePay/tricklepay-contracts/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Soroban smart contracts for TricklePay, a token streaming protocol on Stellar.
 
 A stream locks a sum of tokens from a sender and releases them to a recipient
@@ -44,6 +47,16 @@ build, or host behavior exercised by tests. Review the SDK release notes,
 update the workspace pin, and run the full test and lint suite. Also rebuild
 and inspect the contract interface and WASM artifact before deployment, since
 SDK changes can affect the contract ABI or what the Soroban host accepts.
+
+### Pinned Stellar CLI version
+
+The contract tools and scripts expect Stellar CLI version `25.3.0` to ensure protocol and XDR alignment with Soroban SDK `25.3.2`. Install the pinned CLI version with:
+
+```bash
+cargo install --locked stellar-cli --version 25.3.0
+```
+
+> **Compatibility Note:** CLI major and minor versions must align with the target Soroban SDK. Using a newer or mismatched Stellar CLI version can cause CLI flag deprecation warnings or XDR type parsing errors during inspection and deployment.
 
 ## How a stream works
 
@@ -513,6 +526,26 @@ such as `stream.withdrawn += amount` abort on overflow instead of wrapping, so
 removing `overflow-checks = true` would remove a safety check from contract
 balance updates.
 
+### Running CI checks locally and pre-push hook
+
+`scripts/ci.sh` runs formatting, clippy lints, and tests exactly as CI does, exiting non-zero on the first failure:
+
+```bash
+./scripts/ci.sh
+```
+
+To run these checks automatically before pushing, wire the script into a Git `pre-push` hook:
+
+```bash
+ln -s ../../scripts/ci.sh .git/hooks/pre-push
+```
+
+Or on Windows / PowerShell:
+
+```powershell
+cp scripts/ci.sh .git/hooks/pre-push
+```
+
 ### Reading the test suite
 
 The suite is organised by behaviour, not by entry point, so a failing test
@@ -908,7 +941,7 @@ stellar contract info interface \
   --network <NETWORK>
 ```
 
-The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli).
+The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.3.0` for compatibility with Soroban SDK `25.3.2`.
 To reproduce a deployment artifact, use the same exact Rust compiler version
 and target that were used to build the deployed WASM.
 

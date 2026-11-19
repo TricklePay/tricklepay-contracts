@@ -27,7 +27,23 @@ echo "Building optimized WASM..."
 cargo build --locked --release --target "$WASM_TARGET"
 
 echo "Deploying to ${NETWORK} as '${IDENTITY}'..."
-stellar contract deploy \
+CONTRACT_ID=$(stellar contract deploy \
   --wasm "$WASM" \
   --source "$IDENTITY" \
-  --network "$NETWORK"
+  --network "$NETWORK")
+
+if command -v sha256sum >/dev/null 2>&1; then
+  WASM_HASH=$(sha256sum "$WASM" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  WASM_HASH=$(shasum -a 256 "$WASM" | awk '{print $1}')
+else
+  echo "Error: Neither sha256sum nor shasum is available." >&2
+  exit 1
+fi
+
+echo "=========================================="
+echo "Deployment Successful!"
+echo "Contract ID : $CONTRACT_ID"
+echo "WASM File   : $WASM"
+echo "WASM Hash   : sha256:$WASM_HASH"
+echo "=========================================="
