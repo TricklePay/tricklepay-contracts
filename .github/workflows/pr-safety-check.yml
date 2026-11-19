@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           # Retry transient 5xx responses; 4xx responses are not retried.
           retries: 3
