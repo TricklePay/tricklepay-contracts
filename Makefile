@@ -3,15 +3,21 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
 
 # Check the release overflow setting and the built contract interface.
 # Use this before opening a pull request.
-all check: check-manifest fmt-check lint test audit check-markdown-links test-markdown-links lint-scripts
+all check: check-release-overflow check-manifest fmt-check lint test audit
 	./scripts/diff-interface.sh
+
+check-release-overflow: ## Verify [profile.release] sets overflow-checks = true in Cargo.toml.
+	./scripts/check-release-overflow.sh
+
+test-release-overflow: ## Run unit tests for scripts/check-release-overflow.sh.
+	python3 scripts/test_check_release_overflow.py
 
 check-manifest: ## Verify Cargo manifests parse without resolving remote dependencies.
 	cargo metadata --no-deps --locked
@@ -71,6 +77,7 @@ lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
 		shellcheck scripts/*.sh; \
 	fi
 
+.PHONY: docs
 docs: ## Build crate documentation, treating warnings as errors.
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
