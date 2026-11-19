@@ -72,7 +72,7 @@ lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.
 	fi
 
 docs: ## Build crate documentation, treating warnings as errors.
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
 audit: ## Audit dependencies for known vulnerabilities.
 	cargo audit --deny warnings

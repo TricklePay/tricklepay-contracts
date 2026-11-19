@@ -23,8 +23,11 @@ Prerequisites:
   the toolchain and target with [rustup](https://rustup.rs). The reproducible
   WASM build instructions were verified with Rust 1.96.0, so record and use the
   same compiler version when reproducing a deployment build.
-- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)**, only
-  needed if you deploy the contract to a network.
+- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)** (`stellar-cli`), pinned to version `25.3.0` to match Soroban SDK `25.3.2` compatibility. Install the pinned version with:
+  ```bash
+  cargo install --locked stellar-cli --version 25.3.0
+  ```
+  Only needed if you plan to deploy to a network, run `make snapshot`, or run `make verify-deployment`. Using an unpinned or mismatched CLI version can cause CLI flag drift or XDR decoding errors.
 
 Clone and build:
 
@@ -50,7 +53,16 @@ bash ./scripts/check-release-overflow.sh
 > **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
 
 CI runs the same checks on every push and pull request. The audit command uses the
-allowlist in `.cargo/audit.toml`.
+allowlist in `.cargo/audit.toml`. CI also runs the Markdown link checker and its
+unit tests with the runner's Python:
+
+```bash
+python3 scripts/check-markdown-links.py
+python3 scripts/test_check_markdown_links.py
+```
+
+The workflow declares `permissions: contents: read`. New jobs must add only the
+permissions they actually need rather than relying on the repository default.
 
 The vesting and status property tests use Proptest's default 256 cases per
 property. To run more cases before a release or after changing property-tested
