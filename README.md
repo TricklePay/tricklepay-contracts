@@ -639,6 +639,7 @@ function was called. It lives in two places:
 | `cancellation.rs` | `cancel`: the vested/refund split, boundary timing (start, cliff, end), rejecting a second cancel or one after completion | `cancel_refunds_unvested_and_preserves_vested`, `cancel_with_cliff_not_reached`, `cancel_on_stream_at_end_time_is_rejected`, `test_repeated_cancel_fails` |
 | `views.rs`        | Read-only queries, including timestamp projections, stream existence, and the amount ceiling; no state or event side effects | `vested_at_projects_the_schedule_and_freezes_after_cancellation`, `stream_exists_reports_existing_unknown_cancelled_and_completed_streams`, `max_amount_view_returns_i64_max` |
 | `documentation.rs` | README error-code table matches every `StreamError` variant and code | `readme_error_table_matches_stream_error_variants_and_codes` |
+| `budget.rs`       | Measured resource costs and budget regression ceilings for `create_stream`, `withdraw`, `cancel`, and batch reads | `create_stream_resource_budget_stays_within_ceiling`, `withdraw_resource_budget_stays_within_ceiling`, `cancel_resource_budget_stays_within_ceiling`, `get_streams_batch_20_ids_resource_budget_stays_within_ceiling` |
 | `events.rs`       | Event ordering and topic correctness for every entry point, and silence on a rejected call        | `create_emits_created_after_the_funding_transfer`, `lifecycle_events_follow_operation_order`, `created_event_topics_index_sender_and_recipient`, `rejected_create_publishes_no_events` |
 | `storage.rs`      | `DataKey` encoding across the id range, persistent/instance TTL bumps on both sides of `BUMP_THRESHOLD`, and read-only non-extension | `stream_ids_map_to_distinct_persistent_keys`, `a_stream_entry_ttl_decays_with_the_ledger_sequence`, `withdrawing_restores_a_decayed_stream_ttl`, `view_calls_do_not_extend_the_instance_ttl`, `get_streams_does_not_postpone_ttl_decay` |
 | `auth.rs`         | Authorization requirements for every mutating entry point                                         | `withdraw_requires_recipient_authorization`, `cancel_requires_sender_authorization`, `test_third_party_cannot_mutate_streams`              |
@@ -926,6 +927,206 @@ Note that `recipient_amount` reflects the _remaining claimable balance_ at
 cancellation time (vested minus already withdrawn), not the total that had
 vested. The sender refund covers only the unvested portion; tokens the recipient
 had already withdrawn are not returned.
+
+### RPC getEvents filter examples
+
+The Soroban RPC `getEvents` method allows off-chain indexers and user interfaces
+to query and stream contract events matching specific topic patterns.
+
+Topics are matched positionally according to the `#[topic]` layout defined in
+[`contracts/stream/src/events.rs`](contracts/stream/src/events.rs). When querying
+events, topic segments are passed as base64-encoded `ScVal` values or wildcards
+(`*` matches any topic in that position):
+
+- **Event symbol topic (index 0):** Every contract event begins with the symbol
+  name in lowercase:
+  - `"created"`: `AAAADwAAAAdjcmVhdGVkAA==`
+  - `"withdrawn"`: `AAAADwAAAAl3aXRoZHJhd24AAAA=`
+  - `"cancelled"`: `AAAADwAAAAljYW5jZWxsZWQAAAA=`
+- **Address topics (indices 1 & 2):** ScVal address values (e.g.,
+  `ScVal::Address`). In JSON-RPC requests, addresses are formatted as base64 XDR.
+
+#### 1. Filter `Created` events by sender
+
+The `Created` event defines topics `[symbol("created"), sender, recipient]`. To
+filter for all streams opened by a specific sender regardless of recipient, match
+the first two positions and pass `*` for the recipient:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"],
+          ["*"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 2. Filter `Created` events by recipient
+
+To filter for streams destined for a specific recipient from any sender, wildcard
+the sender position (index 1) and match the recipient in position 2:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["*"],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 3. Filter `Withdrawn` events by recipient
+
+The `Withdrawn` event defines topics `[symbol("withdrawn"), recipient]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAl3aXRoZHJhd24AAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 4. Filter `Cancelled` events by sender
+
+The `Cancelled` event defines topics `[symbol("cancelled"), sender]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAljYW5jZWxsZWQAAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+> [!IMPORTANT]
+> **Filtering `Cancelled` events:** Unlike `Created`, the `Cancelled` event indexes
+> **only `sender`** as a topic. The recipient's share (`recipient_amount`) is
+> contained within the unindexed data payload rather than topics. As a result,
+> `Cancelled` events **can only be filtered by sender** at the RPC filter layer.
+> Indexers tracking recipient streams must either associate cancellations by stream
+> id from earlier `Created` events, scan unindexed event payloads, or query
+> `get_stream`.
+
+#### Retention window and pagination cursor
+
+- **History retention window:** Standard Soroban RPC nodes retain event history
+  only within the bounded `history-retention-window` (defaulting to 120,960 ledgers,
+  or approximately 7 days on networks with 5-second ledger intervals). Submitting a
+  request with `startLedger` older than the retention boundary returns an error
+  (`startLedger must be within the history retention window`). For long-term
+  historical indexing, applications should continuously ingest events or rely on an
+  archival datastore.
+- **Pagination cursors:** Responses include an opaque paging `cursor` string on
+  each page. When paginating across multiple result pages, pass the returned
+  cursor via `"pagination": { "cursor": "<cursor>", "limit": 100 }`. When `cursor`
+  is provided, `startLedger` **must be omitted** in subsequent continuation requests,
+  as the cursor uniquely encodes the ledger sequence and event offset.
+
+## Resource costs
+
+Integrators pay Soroban resource fees based on CPU instruction execution, RAM
+allocation, and persistent ledger storage footprint. The figures below reflect
+measured resource consumption in the local test environment using Soroban SDK
+`25.3.2` (Stellar protocol 22/23 test environment).
+
+### Measured resource usage
+
+| Entry point | CPU instructions | Memory (bytes) | Read entries | Write entries | Operations & Footprint |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
+| `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
+| `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
+| `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
+| `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
+| `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
+| `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
+
+\* *`get_stream` (and other individual view queries) does not write stream data, but
+issues a TTL extension entry if remaining entry lifetime has decayed below
+`BUMP_THRESHOLD` (103,680 ledgers). In contrast, batch reads (`get_streams`) and
+simulation queries (`cancel_preview`) deliberately use `storage::get_stream_readonly`
+and never write state or extend TTL.*
+
+### Measurement method and environment
+
+- **SDK version:** Soroban SDK `25.3.2` with native testing utilities enabled
+  (`features = ["testutils"]`).
+- **CPU & Memory:** Measured via `env.cost_estimate().budget().cpu_instruction_cost()`
+  and `env.cost_estimate().budget().memory_bytes_cost()`, capturing the CPU
+  instruction cycles and memory byte allocations across the host invocation.
+- **Ledger entries:** Metered via `env.cost_estimate().resources()`, counting total
+  accessed entries (`disk_read_entries + memory_read_entries`) and modified entries
+  (`write_entries`).
+- **Regression test suite:** To prevent silent resource bloat, the contract test
+  suite includes dedicated budget ceiling assertions in
+  [`tests/budget.rs`](contracts/stream/src/tests/budget.rs). Each test verifies that
+  execution stays within conservative ceilings and prints the measured value upon
+  failure so that limits can only be raised deliberately.
 
 ## Reading the contract interface
 

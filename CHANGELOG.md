@@ -59,6 +59,17 @@ contract.
   now shown by `stellar contract inspect`.
 - Clarified the README around cliff/no-cliff semantics, exact-end withdrawals,
   and cancellation behaviour so stream boundaries are easier to reason about.
+- Removed the one-line private helper `vested_amount_at` in `contract.rs`; call sites
+  in `vested` and `vested_at` now invoke `stream.vested_amount` directly and
+  consistently with other calculation sites.
+- Centralized `Cancelled` event publishing into `events::publish_cancelled` in
+  `events.rs`, aligning cancellation publishing with `publish_created` and `publish_withdrawn`.
+- Documented JSON-RPC `getEvents` filter examples for `Created` (by sender and by recipient),
+  `Withdrawn` (by recipient), and `Cancelled` (by sender) in `README.md`, including
+  topic XDR base64 symbols, ledger retention windows, and pagination cursor semantics.
+- Documented instruction, memory, and ledger entry resource costs per entry point
+  in `README.md` measured against `soroban-sdk = "=25.3.2"`, with regression test ceilings
+  enforced in `tests/budget.rs`.
 
 ### Added
 
