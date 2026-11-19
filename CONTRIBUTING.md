@@ -76,7 +76,7 @@ example `cargo test vested_between_zero_and_total`.
 If you intentionally changed the contract interface, update the snapshot before opening your PR:
 ```bash
 make wasm
-stellar contract inspect --wasm target/wasm32v1-none/release/tricklepay_stream.wasm > docs/interface.txt
+stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust > docs/interface.txt
 ```
 The equivalent target is `make snapshot`. Run `make check-markdown-links` when
 changing documentation, and use `make verify-deployment CONTRACT_ID=C... NETWORK=testnet`
