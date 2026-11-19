@@ -9,7 +9,7 @@ Welcome to the **TricklePay Contracts** documentation directory. This index help
 | [`SECURITY.md`](../SECURITY.md) | Security reporting policy and guidance for disclosing vulnerabilities. | Security Researchers, Users |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Development setup, contribution workflow, and review expectations. | Contributors |
 | [`AUDIT_READINESS.md`](./AUDIT_READINESS.md) | Checklist, security scope, and preparation guidelines for code audits. | Security Auditors, Core Contributors |
-| [`Decisions.md`](./Decisions.md) | Architectural Decision Records (ADRs) detailing key design choices and rationale. | Contributors, Maintainers |
+| [`DECISIONS.md`](./DECISIONS.md) | Architectural Decision Records (ADRs) detailing key design choices and rationale. | Contributors, Maintainers |
 | [`ADR-552-stream-id-event-topic.md`](./ADR-552-stream-id-event-topic.md) | Decision on whether to index stream ids as event topics, with consumer migration impact. | Contributors, Integrators |
 | [`DESIGN_BATCH_STREAM_CREATION.md`](./DESIGN_BATCH_STREAM_CREATION.md) | Proposed atomic batch stream creation API and resource trade-offs. | Contributors, Integrators |
 | [`INTEGRATOR_OPERATIONS.md`](./INTEGRATOR_OPERATIONS.md) | Operational instructions and integration patterns for third-party consumers. | Integrators, Client Developers |

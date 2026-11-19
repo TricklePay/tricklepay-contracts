@@ -232,4 +232,4 @@ Existing invariants are preserved:
 
 - [README.md § How a stream works](../README.md#how-a-stream-works)
 - [docs/INTEGRATOR_OPERATIONS.md § Indexer Consistency Requirements](../docs/INTEGRATOR_OPERATIONS.md#indexer-consistency-requirements)
-- [docs/Decisions.md § ADR 1: Enumeration is off-chain, not an entry point](../docs/Decisions.md#adr-1-enumeration-is-off-chain-not-an-entry-point)
+- [docs/DECISIONS.md § ADR 1: Enumeration is off-chain, not an entry point](../docs/DECISIONS.md#adr-1-enumeration-is-off-chain-not-an-entry-point)
