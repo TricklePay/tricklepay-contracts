@@ -38,7 +38,7 @@ pub trait Contract {
         amount: i128,
     ) -> Result<i128, StreamError>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Stream {
     pub cancelled: bool,
@@ -51,13 +51,13 @@ pub struct Stream {
     pub total_amount: i128,
     pub withdrawn: i128,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Settlement {
     pub recipient_remaining: i128,
     pub refund: i128,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum StreamStatus {
     Pending,
@@ -65,13 +65,13 @@ pub enum StreamStatus {
     Completed,
     Cancelled,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DataKey {
     StreamCount,
     Stream(u64),
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum StreamError {
     StreamNotFound = 1,
@@ -88,7 +88,7 @@ pub enum StreamError {
     InvalidParticipant = 13,
     BatchTooLarge = 14,
 }
-#[soroban_sdk::contractevent(topics = ["created"], data_format = "map")]
+#[soroban_sdk::contractevent(export = false, topics = ["created"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Created {
     #[topic]
@@ -102,7 +102,7 @@ pub struct Created {
     pub end_time: u64,
     pub cliff_time: u64,
 }
-#[soroban_sdk::contractevent(topics = ["cancelled"], data_format = "map")]
+#[soroban_sdk::contractevent(export = false, topics = ["cancelled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Cancelled {
     #[topic]
@@ -111,7 +111,7 @@ pub struct Cancelled {
     pub recipient_amount: i128,
     pub sender_refund: i128,
 }
-#[soroban_sdk::contractevent(topics = ["withdrawn"], data_format = "map")]
+#[soroban_sdk::contractevent(export = false, topics = ["withdrawn"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Withdrawn {
     #[topic]

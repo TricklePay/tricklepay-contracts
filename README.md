@@ -50,10 +50,10 @@ SDK changes can affect the contract ABI or what the Soroban host accepts.
 
 ### Pinned Stellar CLI version
 
-The contract tools and scripts expect Stellar CLI version `25.3.0` to ensure protocol and XDR alignment with Soroban SDK `25.3.2`. Install the pinned CLI version with:
+The contract tools and scripts expect Stellar CLI version `25.2.0` to ensure protocol and XDR alignment with Soroban SDK `25.3.2`. Install the pinned CLI version with:
 
 ```bash
-cargo install --locked stellar-cli --version 25.3.0
+cargo install --locked stellar-cli --version 25.2.0
 ```
 
 > **Compatibility Note:** CLI major and minor versions must align with the target Soroban SDK. Using a newer or mismatched Stellar CLI version can cause CLI flag deprecation warnings or XDR type parsing errors during inspection and deployment.
@@ -500,6 +500,7 @@ All common contributor tasks are wrapped in the `Makefile`. Run `make` (or
   fmt-check  Verify formatting without modifying files (used in CI).
   lint       Lint every target and treat warnings as errors (cargo clippy -D warnings).
   lint-scripts  Check shell syntax and lint scripts with ShellCheck.
+  size-budget  Fail when the compiled WASM exceeds wasm-size-budget.txt.
   audit      Audit dependencies for known vulnerabilities (cargo audit --deny warnings).
   clean      Remove build artifacts (cargo clean).
   deploy     Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
@@ -513,6 +514,7 @@ make test           # run the test suite only
 make fmt            # auto-format all Rust source files
 make wasm           # produce the release WASM ready for deployment
 make lint-scripts   # check scripts/*.sh with bash -n and ShellCheck
+make size-budget    # check the WASM against wasm-size-budget.txt
 make audit          # check for vulnerable or unmaintained dependencies
 make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
 ```
@@ -611,11 +613,15 @@ ls -la target/wasm32v1-none/release/tricklepay_stream.wasm
 wc -c < target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
-**Current size:** as of 2026-10-22 (commit `f03a6e5`), the release WASM built from this source is **47,991 bytes** (≈ 48 KB). This figure changes with the Rust toolchain version and with the length of doc comments, so a build on a different toolchain can differ slightly without anything being wrong. There is no enforced ceiling checked in CI, so
-this number is a reference point, not a budget — treat a jump that isn't
-explained by an intentional feature addition as a regression worth
-investigating before merging, the same way `make audit` and `make check`
-surface other classes of regressions.
+**Size budget:** CI builds the release WASM and fails when it exceeds the
+value in [`wasm-size-budget.txt`](wasm-size-budget.txt) (currently 45,000
+bytes). The same check runs locally with `make size-budget`. Raising the
+budget is an intentional edit that belongs in the same pull request as the
+change that grows the binary. The size still changes with the Rust toolchain
+version and with the length of doc comments, so small differences between
+local and CI builds are expected; a jump that isn't explained by an
+intentional feature addition is a regression worth investigating before
+merging.
 
 ## Implementation details
 
@@ -942,7 +948,7 @@ stellar contract info interface \
   --network <NETWORK>
 ```
 
-The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.3.0` for compatibility with Soroban SDK `25.3.2`.
+The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.2.0` for compatibility with Soroban SDK `25.3.2`.
 To reproduce a deployment artifact, use the same exact Rust compiler version
 and target that were used to build the deployed WASM.
 

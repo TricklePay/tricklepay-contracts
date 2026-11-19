@@ -23,9 +23,9 @@ Prerequisites:
   the toolchain and target with [rustup](https://rustup.rs). The reproducible
   WASM build instructions were verified with Rust 1.96.0, so record and use the
   same compiler version when reproducing a deployment build.
-- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)** (`stellar-cli`), pinned to version `25.3.0` to match Soroban SDK `25.3.2` compatibility. Install the pinned version with:
+- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)** (`stellar-cli`), pinned to version `25.2.0` to match Soroban SDK `25.3.2` compatibility. Install the pinned version with:
   ```bash
-  cargo install --locked stellar-cli --version 25.3.0
+  cargo install --locked stellar-cli --version 25.2.0
   ```
   Only needed if you plan to deploy to a network, run `make snapshot`, or run `make verify-deployment`. Using an unpinned or mismatched CLI version can cause CLI flag drift or XDR decoding errors.
 
@@ -99,8 +99,9 @@ to compare a deployment with the local build.
 Rustdoc comments on `#[contractimpl]` items, `#[contracttype]` types, and
 `#[contracterror]` errors are included in the deployed WASM spec. They increase
 the binary size and deployment fee, so keep them concise. Use `make size` to
-check the binary size and `make snapshot` to inspect and update the interface
-snapshot.
+check the binary size, `make size-budget` to check it against
+[`wasm-size-budget.txt`](wasm-size-budget.txt), and `make snapshot` to inspect
+and update the interface snapshot.
 
 ## Testing
 

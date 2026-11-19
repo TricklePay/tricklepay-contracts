@@ -56,6 +56,10 @@ wasm-hash: ## Build the WASM with the locked dependencies and print its SHA-256 
 size: wasm ## Report the compiled contract's WASM size (builds it first if needed).
 	@echo "$(WASM): $$(wc -c < $(WASM) | tr -d ' ') bytes ($$(du -h $(WASM) | cut -f1))"
 
+.PHONY: size-budget
+size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
+	./scripts/check-wasm-size.sh
+
 test: ## Run the full test suite.
 	cargo test --locked
 
