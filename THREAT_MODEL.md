@@ -140,6 +140,39 @@ real-world identity elsewhere, but it does not hide the amount, the
 schedule, or the existence of a payment relationship between whichever two
 addresses are named on the stream.
 
+## Batch reads and cancellation previews
+
+The contract provides read-only views for inspecting multiple streams in a single call (`get_streams`) and estimating cancellation settlements before submitting transactions (`cancel_preview`). Neither view requires authorization, mutates ledger storage, publishes contract events, or extends entry time-to-live (TTL).
+
+### Batch reads (`get_streams`)
+
+`get_streams(ids: Vec<u64>) -> Result<Vec<Option<Stream>>, StreamError>` allows clients, indexers, and dashboards to fetch up to 20 stream records in a single RPC round-trip.
+
+- **Resource cost and footprint limits:** In Soroban, transaction execution and simulation are constrained by CPU instruction quotas, memory limits, and persistent storage read footprints (the number of ledger entries read and their byte size). Reading many persistent stream entries in a single invocation scales linearly in storage reads and deserialization cost.
+- **Why the batch limit is 20 (`MAX_BATCH_SIZE`):** The 20-stream cap (`MAX_BATCH_SIZE = 20`) bounds the transaction's read footprint and memory footprint well within network transaction limits. This prevents denial-of-service, out-of-gas, or footprint exhaustion errors during simulation or RPC execution, while still delivering an order-of-magnitude reduction in round-trip latency compared to sequential single-stream reads.
+- **Failure modes and partial returns:**
+  - If a caller supplies more than 20 stream IDs, the call immediately rejects with `StreamError::BatchTooLarge` (code `14`) without reading storage.
+  - If a requested stream ID does not exist in storage (whether never created or currently archived), `get_streams` returns `None` at that position in the returned list rather than failing the call. The returned vector preserves the exact length and ordering of the requested `ids`.
+- **No storage modification or TTL extension:** `get_streams` uses `storage::get_stream_readonly`. Unlike single `get_stream(id)` calls, batch reads do **not** invoke `extend_ttl`. Consequently, querying streams via `get_streams` does not postpone entry expiry or prevent archived streams from expiring. Integrators must not rely on dashboard batch queries to keep stream entries alive in persistent storage.
+
+### Cancellation preview (`cancel_preview`)
+
+`cancel_preview(id: u64) -> Result<vesting::Settlement, StreamError>` simulates the effect of `cancel(id)` at the current ledger timestamp and returns the calculated `Settlement` (`refund` for the sender and `recipient_remaining` for the recipient).
+
+- **Execution characteristics:** It executes read-only without requiring sender authorization (`require_auth`), without moving any tokens, without updating stream state, and without emitting events.
+- **Failure modes:**
+  - `StreamError::StreamNotFound` (code `1`): The stream ID does not exist in storage or is archived.
+  - `StreamError::AlreadyCancelled` (code `6`): The stream was already cancelled.
+  - `StreamError::StreamAlreadyCompleted` (code `9`): The current ledger timestamp is at or past `end_time` (`now >= end_time`), where the stream is 100% vested and no unvested balance remains to refund.
+- **No storage modification or TTL extension:** Like `get_streams`, `cancel_preview` calls `storage::get_stream_readonly` and does not extend storage TTL.
+- **What a client must not assume from a preview:**
+  1. **Timing drift between simulation and execution:** A preview calculates settlement amounts strictly against the ledger timestamp at the instant of simulation (`env.ledger().timestamp()`). Between off-chain simulation (or local preview) and the inclusion of the actual `cancel` transaction on-chain, ledger time advances. Because vesting accrues continuously:
+     - The recipient's accrued portion increases.
+     - The sender's unvested refund decreases.
+     If the transaction is submitted during an active vesting window, the executed settlement will differ from the preview. Clients and user interfaces must treat the preview as an instantaneous estimate, not an immutable quote or guaranteed settlement.
+  2. **No escrow lock or reservation:** Calling `cancel_preview` does not acquire a lock or reserve funds in the contract. A recipient can execute `withdraw` or `withdraw_amount` in the interval between preview and cancellation submission, reducing `recipient_remaining`.
+  3. **No authority grant:** `cancel_preview` is permissionless and can be invoked by anyone. Calling it does not mean the caller possesses the sender's signing keys to execute `cancel`.
+
 ## Invariants
 
 These properties must hold after every successful call. A reviewer checking a
