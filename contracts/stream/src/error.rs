@@ -93,3 +93,41 @@ pub enum StreamError {
     /// Interface code `14`.
     BatchTooLarge = 14,
 }
+
+impl StreamError {
+    /// Every variant of [`StreamError`].
+    pub const ALL: &'static [StreamError] = &[
+        StreamError::StreamNotFound,
+        StreamError::InvalidTimeRange,
+        StreamError::InvalidAmount,
+        StreamError::InvalidCliff,
+        StreamError::AlreadyCancelled,
+        StreamError::NothingToWithdraw,
+        StreamError::InsufficientBalance,
+        StreamError::StreamAlreadyCompleted,
+        StreamError::AmountTooLarge,
+        StreamError::StreamWindowInPast,
+        StreamError::StreamCountExhausted,
+        StreamError::InvalidParticipant,
+        StreamError::BatchTooLarge,
+    ];
+
+    /// Returns the variant name as a static string.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            StreamError::StreamNotFound => "StreamNotFound",
+            StreamError::InvalidTimeRange => "InvalidTimeRange",
+            StreamError::InvalidAmount => "InvalidAmount",
+            StreamError::InvalidCliff => "InvalidCliff",
+            StreamError::AlreadyCancelled => "AlreadyCancelled",
+            StreamError::NothingToWithdraw => "NothingToWithdraw",
+            StreamError::InsufficientBalance => "InsufficientBalance",
+            StreamError::StreamAlreadyCompleted => "StreamAlreadyCompleted",
+            StreamError::AmountTooLarge => "AmountTooLarge",
+            StreamError::StreamWindowInPast => "StreamWindowInPast",
+            StreamError::StreamCountExhausted => "StreamCountExhausted",
+            StreamError::InvalidParticipant => "InvalidParticipant",
+            StreamError::BatchTooLarge => "BatchTooLarge",
+        }
+    }
+}

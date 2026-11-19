@@ -32,37 +32,18 @@ fn readme_error_table_matches_stream_error_variants_and_codes() {
             (variant, code)
         })
         .collect();
-    let expected = [
-        ("StreamNotFound", StreamError::StreamNotFound as u32),
-        ("InvalidTimeRange", StreamError::InvalidTimeRange as u32),
-        ("InvalidAmount", StreamError::InvalidAmount as u32),
-        ("InvalidCliff", StreamError::InvalidCliff as u32),
-        ("AlreadyCancelled", StreamError::AlreadyCancelled as u32),
-        ("NothingToWithdraw", StreamError::NothingToWithdraw as u32),
-        (
-            "InsufficientBalance",
-            StreamError::InsufficientBalance as u32,
-        ),
-        (
-            "StreamAlreadyCompleted",
-            StreamError::StreamAlreadyCompleted as u32,
-        ),
-        ("AmountTooLarge", StreamError::AmountTooLarge as u32),
-        ("StreamWindowInPast", StreamError::StreamWindowInPast as u32),
-        (
-            "StreamCountExhausted",
-            StreamError::StreamCountExhausted as u32,
-        ),
-        ("InvalidParticipant", StreamError::InvalidParticipant as u32),
-    ];
+    let expected: std::vec::Vec<(&'static str, u32)> = StreamError::ALL
+        .iter()
+        .map(|&err| (err.name(), err as u32))
+        .collect();
 
-    for (variant, expected_code) in expected {
-        let Some((_, actual_code)) = actual.iter().find(|(name, _)| name.as_str() == variant)
+    for (variant, expected_code) in &expected {
+        let Some((_, actual_code)) = actual.iter().find(|(name, _)| name.as_str() == *variant)
         else {
             panic!("README error table is missing StreamError::{variant}");
         };
         assert_eq!(
-            *actual_code, expected_code,
+            *actual_code, *expected_code,
             "README error table has the wrong code for StreamError::{variant}"
         );
     }
@@ -76,6 +57,45 @@ fn readme_error_table_matches_stream_error_variants_and_codes() {
         actual.len(),
         expected.len(),
         "README error table must list every StreamError variant exactly once"
+    );
+}
+
+#[test]
+fn stream_error_all_matches_exhaustive_match() {
+    fn check_in_all(err: StreamError) {
+        assert!(
+            StreamError::ALL.contains(&err),
+            "StreamError::ALL is missing variant {:?}",
+            err
+        );
+    }
+
+    // Exhaustive match: if a variant is added to StreamError, this match
+    // will fail to compile unless updated, ensuring StreamError::ALL is
+    // kept complete.
+    let check_exhaustive = |err: StreamError| match err {
+        StreamError::StreamNotFound => check_in_all(err),
+        StreamError::InvalidTimeRange => check_in_all(err),
+        StreamError::InvalidAmount => check_in_all(err),
+        StreamError::InvalidCliff => check_in_all(err),
+        StreamError::AlreadyCancelled => check_in_all(err),
+        StreamError::NothingToWithdraw => check_in_all(err),
+        StreamError::InsufficientBalance => check_in_all(err),
+        StreamError::StreamAlreadyCompleted => check_in_all(err),
+        StreamError::AmountTooLarge => check_in_all(err),
+        StreamError::StreamWindowInPast => check_in_all(err),
+        StreamError::StreamCountExhausted => check_in_all(err),
+        StreamError::InvalidParticipant => check_in_all(err),
+        StreamError::BatchTooLarge => check_in_all(err),
+    };
+
+    for &err in StreamError::ALL {
+        check_exhaustive(err);
+    }
+    assert_eq!(
+        StreamError::ALL.len(),
+        13,
+        "StreamError::ALL must have one entry per enum variant"
     );
 }
 
@@ -154,4 +174,3 @@ fn interface_snapshot_lists_every_public_entry_point() {
         );
     }
 }
-
