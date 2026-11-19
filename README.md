@@ -48,6 +48,16 @@ update the workspace pin, and run the full test and lint suite. Also rebuild
 and inspect the contract interface and WASM artifact before deployment, since
 SDK changes can affect the contract ABI or what the Soroban host accepts.
 
+### Pinned Stellar CLI version
+
+The contract tools and scripts expect Stellar CLI version `25.3.0` to ensure protocol and XDR alignment with Soroban SDK `25.3.2`. Install the pinned CLI version with:
+
+```bash
+cargo install --locked stellar-cli --version 25.3.0
+```
+
+> **Compatibility Note:** CLI major and minor versions must align with the target Soroban SDK. Using a newer or mismatched Stellar CLI version can cause CLI flag deprecation warnings or XDR type parsing errors during inspection and deployment.
+
 ## How a stream works
 
 **All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
@@ -931,7 +941,7 @@ stellar contract info interface \
   --network <NETWORK>
 ```
 
-The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli).
+The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.3.0` for compatibility with Soroban SDK `25.3.2`.
 To reproduce a deployment artifact, use the same exact Rust compiler version
 and target that were used to build the deployed WASM.
 

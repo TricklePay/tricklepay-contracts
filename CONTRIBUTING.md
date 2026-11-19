@@ -23,8 +23,11 @@ Prerequisites:
   the toolchain and target with [rustup](https://rustup.rs). The reproducible
   WASM build instructions were verified with Rust 1.96.0, so record and use the
   same compiler version when reproducing a deployment build.
-- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)**, only
-  needed if you deploy the contract to a network.
+- **The [Stellar CLI](https://developers.stellar.org/docs/tools/cli)** (`stellar-cli`), pinned to version `25.3.0` to match Soroban SDK `25.3.2` compatibility. Install the pinned version with:
+  ```bash
+  cargo install --locked stellar-cli --version 25.3.0
+  ```
+  Only needed if you plan to deploy to a network, run `make snapshot`, or run `make verify-deployment`. Using an unpinned or mismatched CLI version can cause CLI flag drift or XDR decoding errors.
 
 Clone and build:
 
