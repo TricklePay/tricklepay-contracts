@@ -519,6 +519,8 @@ make audit          # check for vulnerable or unmaintained dependencies
 make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
 ```
 
+For the comprehensive table of all available `Makefile` targets, their purposes, and when to run each, see [CONTRIBUTING.md § Makefile Targets](CONTRIBUTING.md#makefile-targets).
+
 > **Dependency audit:** `make audit` runs `cargo audit --deny warnings`.
 > Some transitive Soroban test-host dependencies are allowlisted in
 > `.cargo/audit.toml` because they are not compiled into the deployed WASM.

@@ -52,6 +52,35 @@ bash ./scripts/check-release-overflow.sh
 
 > **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
 
+## Makefile Targets
+
+The repository includes a `Makefile` that automates local development, linting, testing, and deployment checks. Run `make` or `make help` to display a summary of available targets.
+
+The table below lists every target defined in the `Makefile`, along with its purpose and when to run it:
+
+| Target | Description / Purpose | When to run |
+| :--- | :--- | :--- |
+| `help` | Displays available targets and their inline documentation. | Run to discover available targets or verify target syntax. |
+| `all`, `check` | Runs the full verification pipeline: manifest check, formatting check, clippy lint, tests, security audit, and interface diff check. | Run locally before opening a pull request (mirrors CI checks). |
+| `check-manifest` | Verifies that Cargo manifests parse correctly without resolving remote dependencies (`cargo metadata --no-deps --locked`). | Run when updating `Cargo.toml` or before submitting a PR. |
+| `fmt` | Automatically formats all Rust source files in place (`cargo fmt`). | Run during development to enforce consistent code styling. |
+| `fmt-check` | Checks that all Rust code conforms to formatting standards without modifying files (`cargo fmt --check`). | Run in CI and before opening a pull request. |
+| `lint` | Runs Clippy across all targets and denies all warnings (`cargo clippy --all-targets -- -D warnings`). | Run before submitting code changes to catch lint issues. |
+| `lint-scripts` | Validates shell syntax with `bash -n` and lints all scripts in `scripts/` using ShellCheck. | Run whenever modifying or creating scripts in `scripts/`. |
+| `test` | Executes the complete test suite including unit tests and proptest invariant suites (`cargo test`). | Run during development and before submitting any pull request. |
+| `audit` | Audits dependencies for known security vulnerabilities using `.cargo/audit.toml` (`cargo audit --deny warnings`). | Run when updating dependencies or before releasing. |
+| `check-markdown-links` | Scans relative Markdown links and heading anchors across documentation files for broken references. | Run when writing or editing documentation files. |
+| `test-markdown-links` | Runs unit tests for `scripts/check-markdown-links.py` (`python3 scripts/test_check_markdown_links.py`). | Run when modifying the Markdown link checker script. |
+| `docs` | Builds Rust documentation for crate packages, treating any rustdoc warnings as errors (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`). | Run when updating doc comments on contract items, types, or errors. |
+| `build` | Compiles a native debug build (`cargo build`). | Run for fast local compilation and syntax verification. |
+| `wasm` | Produces an optimized release WebAssembly binary (`cargo build --locked --release --target wasm32v1-none`). | Run before deployment or when updating the contract interface snapshot. |
+| `wasm-hash` | Builds the locked release WASM and outputs its canonical SHA-256 hash. | Run when generating deployment records or verifying build reproducibility. |
+| `size` | Reports the compiled release WASM file size in bytes and human-readable format. | Run after changing contract code to monitor binary size and deployment costs. |
+| `snapshot` | Compiles the release WASM and inspects its interface to update `docs/interface.txt`. | Run whenever contract entry points, types, or error codes are intentionally modified. |
+| `clean` | Deletes build artifacts in the `target/` directory (`cargo clean`). | Run when troubleshooting compiler state or freeing up disk space. |
+| `deploy` | Builds and deploys the contract to testnet (`./scripts/deploy.sh $(IDENTITY)`). | Run when deploying a tested build to the Stellar testnet. |
+| `verify-deployment` | Compares a deployed on-chain contract's WASM hash against the local build (`./scripts/verify-deployment.sh $(CONTRACT_ID) $(NETWORK)`). | Run to verify deployment integrity on a network. |
+
 CI runs the same checks on every push and pull request. The audit command uses the
 allowlist in `.cargo/audit.toml`. CI also runs the Markdown link checker and its
 unit tests with the runner's Python:
@@ -91,7 +120,7 @@ make wasm
 stellar contract info interface --wasm target/wasm32v1-none/release/tricklepay_stream.wasm --output rust > docs/interface.txt
 ```
 The equivalent target is `make snapshot`. Run `make check-markdown-links` when
-changing documentation, and use `make verify-deployment CONTRACT_ID=C... NETWORK=testnet`
+changing documentation, and use `./scripts/verify-deployment.sh CONTRACT_ID=C... NETWORK=testnet`
 to compare a deployment with the local build.
 
 ## Contract documentation in the deployed spec

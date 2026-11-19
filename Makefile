@@ -97,6 +97,13 @@ ifndef IDENTITY
 endif
 	./scripts/deploy.sh $(IDENTITY)
 
+verify-deployment: ## Compare a deployed contract's WASM with a local build.
+	@if [ -z "$(CONTRACT_ID)" ] || [ -z "$(NETWORK)" ]; then \
+		echo "Usage: make verify-deployment CONTRACT_ID=C... NETWORK=testnet" >&2; \
+		exit 2; \
+	fi
+	./scripts/verify-deployment.sh "$(CONTRACT_ID)" "$(NETWORK)"
+
 help: ## Show this help message.
 	@echo "Usage: make <target>"
 	@echo ""
