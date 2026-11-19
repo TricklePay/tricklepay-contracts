@@ -107,6 +107,81 @@ A stream is defined by a total amount and a window of time:
   that moment; the unvested remainder is refunded to the sender. A cancelled
   stream's vested balance stays claimable.
 
+### Lifecycle sequence diagrams
+
+The following sequence diagrams illustrate the participant interactions, token transfers, state changes, and event emissions for the three primary stream lifecycle operations.
+
+#### Create stream (`create_stream`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Recipient
+
+    Sender->>StreamContract: create_stream(sender, recipient, token, total_amount, start, end, cliff)
+    activate StreamContract
+    StreamContract->>StreamContract: validate participants, schedule, and amount
+    StreamContract->>TokenContract: transfer(from: sender, to: stream_contract, amount: total_amount)
+    activate TokenContract
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract->>StreamContract: persist Stream record (id, total_amount, ...)
+    StreamContract-->>Sender: emit Created(sender, recipient, id, token, total_amount, ...)
+    StreamContract-->>Sender: return stream id (u64)
+    deactivate StreamContract
+```
+
+#### Stream withdrawal (`withdraw` / `withdraw_amount`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Recipient
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+
+    Recipient->>StreamContract: withdraw(id) or withdraw_amount(id, amount)
+    activate StreamContract
+    StreamContract->>StreamContract: compute vested amount and withdrawable balance
+    StreamContract->>TokenContract: transfer(from: stream_contract, to: recipient, amount: payout)
+    activate TokenContract
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract->>StreamContract: persist updated withdrawn amount
+    StreamContract-->>Recipient: emit Withdrawn(recipient, id, amount)
+    StreamContract-->>Recipient: return amount transferred (i128)
+    deactivate StreamContract
+```
+
+#### Stream cancellation (`cancel`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Recipient
+
+    Sender->>StreamContract: cancel(id)
+    activate StreamContract
+    StreamContract->>StreamContract: compute accrued vested amount and unvested refund
+    opt refund > 0
+        StreamContract->>TokenContract: transfer(from: stream_contract, to: sender, amount: refund)
+        activate TokenContract
+        TokenContract-->>StreamContract: ok
+        deactivate TokenContract
+    end
+    StreamContract->>StreamContract: freeze stream (cancelled = true, total_amount = vested)
+    StreamContract-->>Sender: emit Cancelled(sender, id, recipient_amount, sender_refund)
+    StreamContract-->>Sender: return refund amount (i128)
+    deactivate StreamContract
+    Note over Recipient,StreamContract: Recipient can withdraw accrued vested amount anytime
+```
+
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
@@ -120,18 +195,26 @@ seconds, matching the ledger clock.
 
 ### Read-only view functions
 
-| View | Return type | Description |
-| ---- | ----------- | ----------- |
-| `get_stream(id)` | `Stream` | Fetch the full stream record. |
-| `stream_exists(id)` | `bool` | Check whether a stream record exists, including cancelled or completed streams. |
-| `withdrawable(id)` | `i128` | Amount vested but not yet withdrawn. |
-| `vested(id)` | `i128` | Total amount vested at the current ledger time. |
-| `vested_at(id, timestamp)` | `i128` | Project the vested amount at a specified Unix timestamp. |
-| `locked(id)` | `i128` | Amount not yet vested at the current ledger time. |
-| `progress(id)` | `u32` | Vesting progress in basis points, from `0` to `10000`. |
-| `status(id)` | `StreamStatus` | Lifecycle status at the current ledger time. |
-| `stream_count()` | `u64` | Number of streams created so far. |
-| `max_amount()` | `i128` | Maximum amount accepted by `create_stream`. |
+| View | Return type | Errors | Description |
+| ---- | ----------- | ------ | ----------- |
+| `get_stream(id)` | `Stream` | `StreamNotFound` | Fetch the full stream record. |
+| `get_streams(ids)` | `Vec<Option<Stream>>` | `BatchTooLarge` | Fetch multiple stream records (up to `MAX_BATCH_SIZE` IDs) in request order; returns `None` for unknown or expired IDs. |
+| `cancel_preview(id)` | `Settlement` | `StreamNotFound`, `AlreadyCancelled`, `StreamAlreadyCompleted` | Returns the settlement amounts (`refund` to sender, `recipient_remaining` to recipient) a cancel would produce at the current ledger time without mutating state. |
+| `stream_exists(id)` | `bool` | — | Check whether a stream record exists, including cancelled or completed streams. |
+| `withdrawable(id)` | `i128` | `StreamNotFound` | Amount vested but not yet withdrawn. |
+| `vested(id)` | `i128` | `StreamNotFound` | Total amount vested at the current ledger time. |
+| `vested_at(id, timestamp)` | `i128` | `StreamNotFound` | Project the vested amount at a specified Unix timestamp. |
+| `locked(id)` | `i128` | `StreamNotFound` | Amount not yet vested at the current ledger time. |
+| `progress(id)` | `u32` | `StreamNotFound` | Vesting progress in basis points, from `0` to `10000`. |
+| `status(id)` | `StreamStatus` | `StreamNotFound` | Lifecycle status at the current ledger time. |
+| `stream_count()` | `u64` | — | Number of streams created so far. |
+| `max_amount()` | `i128` | — | Maximum amount accepted by `create_stream`. |
+
+`MAX_BATCH_SIZE` is fixed at `20`. Calling `get_streams` with more than 20 IDs fails with `StreamError::BatchTooLarge` (code 14). Both `get_streams` and `cancel_preview` are read-only views that do not modify ledger storage, emit contract events, or extend storage TTL.
+
+`cancel_preview(id)` computes the exact settlement amounts without sender authorization:
+- `refund`: the unvested amount that would be returned to the sender.
+- `recipient_remaining`: the vested amount that would remain claimable by the recipient.
 
 `vested_at(id, timestamp)` uses the same calculation as `vested(id)` when
 `timestamp` equals the current ledger time. Times before the start or cliff
@@ -139,6 +222,29 @@ return zero, and times at or after the end return the full amount. For a
 cancelled stream, timestamps at or after cancellation return the amount vested
 when it was cancelled. `stream_exists(id)` only checks whether a record is
 stored; it does not write state or publish events.
+
+### Dashboard batch querying with `get_streams`
+
+Dashboards displaying multiple streams should query `get_streams` to fetch up to 20 records in a single RPC round-trip rather than querying `get_stream` in a loop:
+
+```typescript
+import { StreamContractClient } from "@tricklepay/sdk";
+
+// Fetch up to MAX_BATCH_SIZE (20) streams in a single batch
+const ids = [0n, 1n, 2n, 3n];
+const streams = await client.get_streams({ ids });
+
+for (let i = 0; i < ids.length; i++) {
+  const stream = streams[i];
+  if (!stream) {
+    console.log(`Stream ${ids[i]} not found or archived`);
+    continue;
+  }
+  console.log(`Stream #${ids[i]}: total=${stream.total_amount}, withdrawn=${stream.withdrawn}`);
+}
+```
+
+Missing or expired IDs return `None` (or `null` in JavaScript) at their respective index without failing the batch. If more than 20 IDs are passed, the contract returns `BatchTooLarge` (code 14).
 
 ### Example schedule
 
@@ -446,7 +552,7 @@ reassigned.
 | 11   | `StreamWindowInPast`      | `end_time` is not in the future at stream creation — the window would be entirely in the past, making the stream 100 % vested immediately (use a direct token transfer instead).                                  |
 | 12   | `StreamCountExhausted`    | The stream id counter has reached `u64::MAX` and cannot increment further without wrapping (which would overwrite existing streams). No further streams can be created on this contract instance.                 |
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
-| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` (20) stream ids in a single request.                                                                                        |
+| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request.                                                                                             |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as

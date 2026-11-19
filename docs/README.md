@@ -6,6 +6,7 @@ Welcome to the **TricklePay Contracts** documentation directory. This index help
 
 | Document | Description | Intended Audience |
 | :--- | :--- | :--- |
+| [`README.md`](../README.md) | High-level overview, architecture, entry point reference, and deployment guide. | Integrators, Contributors, Evaluators |
 | [`THREAT_MODEL.md`](../THREAT_MODEL.md) | Assets, trust assumptions, threats, and security boundaries of the contracts. | Security Auditors, Integrators |
 | [`CHANGELOG.md`](../CHANGELOG.md) | User-facing record of contract, interface, and tooling changes. | Integrators, Maintainers |
 | [`SECURITY.md`](../SECURITY.md) | Security reporting policy and guidance for disclosing vulnerabilities. | Security Researchers, Users |
