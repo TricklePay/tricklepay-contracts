@@ -1,11 +1,13 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
+use soroban_sdk::testutils::Events as _;
 use soroban_sdk::{Event, Vec};
 
 use crate::events::Cancelled;
 use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
 use crate::vesting::Settlement;
-use crate::{StreamError, StreamStatus};
+use crate::{StreamError, StreamStatus, MAX_AMOUNT};
 
 use super::helpers::StreamTest;
 
@@ -544,4 +546,118 @@ fn test_repeated_cancel_fails() {
         t.contract.try_cancel(&id),
         Err(Ok(StreamError::AlreadyCancelled))
     );
+}
+
+proptest! {
+    /// Issue #624 — `cancel_preview` returns the exact settlement produced by `cancel`,
+    /// leaves stored stream records and token balances untouched, matches the emitted
+    /// `Cancelled` event values, and returns the same errors as `cancel` for completed
+    /// and already-cancelled streams.
+    #[test]
+    fn cancel_preview_equals_cancel_and_leaves_state_untouched(
+        total in 100i128..=MAX_AMOUNT,
+        start in 0u64..=1_000_000u64,
+        duration in 1u64..=1_000_000u64,
+        cliff_offset in 0u64..=1_000_000u64,
+        cancel_time in 0u64..=2_500_000u64,
+        withdraw_before_cancel in prop::bool::ANY,
+    ) {
+        let end = start + duration;
+        let cliff = start + cliff_offset.min(duration);
+
+        let t = StreamTest::setup(total);
+        t.set_time(0);
+        let id = t.contract.create_stream(
+            &t.sender,
+            &t.recipient,
+            &t.token_address,
+            &total,
+            &start,
+            &end,
+            &cliff,
+        );
+
+        // Optionally perform a withdrawal prior to cancellation if eligible.
+        if withdraw_before_cancel {
+            let withdraw_time = (start + cancel_time) / 2;
+            if withdraw_time >= cliff && withdraw_time < cancel_time && withdraw_time < end {
+                t.set_time(withdraw_time);
+                let avail = t.contract.withdrawable(&id);
+                if avail > 0 {
+                    t.contract.withdraw(&id);
+                }
+            }
+        }
+
+        t.set_time(cancel_time);
+
+        if cancel_time >= end {
+            // Completed streams: both cancel_preview and cancel return StreamAlreadyCompleted.
+            prop_assert_eq!(
+                t.contract.try_cancel_preview(&id),
+                Err(Ok(StreamError::StreamAlreadyCompleted))
+            );
+            prop_assert_eq!(
+                t.contract.try_cancel(&id),
+                Err(Ok(StreamError::StreamAlreadyCompleted))
+            );
+        } else {
+            // Active stream:
+            // 1. Snapshot state before calling cancel_preview.
+            let stream_before = t.contract.get_stream(&id);
+            let sender_bal_before = t.token.balance(&t.sender);
+            let recipient_bal_before = t.token.balance(&t.recipient);
+            let contract_bal_before = t.token.balance(&t.contract.address);
+            let events_count_before = t.env.events().all().events().len();
+
+            // 2. Call cancel_preview.
+            let preview = t.contract.cancel_preview(&id);
+
+            // 3. Assert cancel_preview changes no state: stream record, balances, and events are untouched.
+            prop_assert_eq!(t.contract.get_stream(&id), stream_before.clone());
+            prop_assert_eq!(t.token.balance(&t.sender), sender_bal_before);
+            prop_assert_eq!(t.token.balance(&t.recipient), recipient_bal_before);
+            prop_assert_eq!(t.token.balance(&t.contract.address), contract_bal_before);
+            prop_assert_eq!(t.env.events().all().events().len(), events_count_before);
+
+            // 4. Call cancel and assert returned refund matches preview.refund.
+            let actual_refund = t.contract.cancel(&id);
+            prop_assert_eq!(actual_refund, preview.refund);
+
+            // 5. Assert emitted Cancelled event matches preview refund and recipient amounts.
+            t.assert_latest_stream_event_topics(
+                Cancelled {
+                    sender: t.sender.clone(),
+                    id,
+                    recipient_amount: preview.recipient_remaining,
+                    sender_refund: preview.refund,
+                }
+                .to_xdr(&t.env, &t.contract.address),
+            );
+
+            // 6. Assert token balances updated exactly according to preview.
+            prop_assert_eq!(
+                t.token.balance(&t.sender),
+                sender_bal_before + preview.refund
+            );
+            prop_assert_eq!(
+                t.token.balance(&t.contract.address),
+                contract_bal_before - preview.refund
+            );
+            prop_assert_eq!(
+                preview.refund + preview.recipient_remaining,
+                total - stream_before.withdrawn
+            );
+
+            // 7. Cancelled streams: both cancel_preview and cancel return AlreadyCancelled.
+            prop_assert_eq!(
+                t.contract.try_cancel_preview(&id),
+                Err(Ok(StreamError::AlreadyCancelled))
+            );
+            prop_assert_eq!(
+                t.contract.try_cancel(&id),
+                Err(Ok(StreamError::AlreadyCancelled))
+            );
+        }
+    }
 }

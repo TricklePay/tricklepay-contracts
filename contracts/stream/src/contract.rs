@@ -16,10 +16,6 @@ pub const BPS_SCALE: u32 = 10_000;
 /// Maximum number of stream ids accepted by [`StreamContract::get_streams`].
 pub const MAX_BATCH_SIZE: u32 = 20;
 
-fn vested_amount_at(stream: &Stream, timestamp: u64) -> i128 {
-    stream.vested_amount(timestamp)
-}
-
 #[contract]
 pub struct StreamContract;
 
@@ -273,13 +269,13 @@ impl StreamContract {
             );
         }
 
-        events::Cancelled {
-            sender: stream.sender.clone(),
+        events::publish_cancelled(
+            &env,
+            &stream.sender,
             id,
-            recipient_amount: settlement.recipient_remaining,
-            sender_refund: settlement.refund,
-        }
-        .publish(&env);
+            settlement.recipient_remaining,
+            settlement.refund,
+        );
 
         Ok(settlement.refund)
     }
@@ -381,13 +377,13 @@ impl StreamContract {
     /// Returns the total amount vested at the current ledger time, including withdrawals.
     pub fn vested(env: Env, id: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        Ok(vested_amount_at(&stream, env.ledger().timestamp()))
+        Ok(stream.vested_amount(env.ledger().timestamp()))
     }
 
     /// Returns the total amount vested at `timestamp`, including withdrawals.
     pub fn vested_at(env: Env, id: u64, timestamp: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        Ok(vested_amount_at(&stream, timestamp))
+        Ok(stream.vested_amount(timestamp))
     }
 
     /// Returns the amount not yet vested, or `StreamNotFound`.

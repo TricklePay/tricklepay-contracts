@@ -1,11 +1,14 @@
 #![cfg(test)]
 
 use soroban_sdk::{
+    auth::{Context, CustomAccountInterface},
+    contract, contracterror, contractimpl,
+    crypto::Hash,
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Events as _, Ledger as _,
+        Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke,
     },
-    token, vec, xdr, Address, Env, TryFromVal, Vec,
+    token, vec, xdr, Address, Env, TryFromVal, Val, Vec,
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
@@ -243,5 +246,123 @@ impl<'a> StreamTest<'a> {
                 .persistent()
                 .get_ttl(&DataKey::Stream(id))
         })
+    }
+
+    /// Construct a [`xdr::SorobanAuthorizationEntry`] for the given address and invocation
+    /// without registering [`soroban_sdk::testutils::MockAuthContract`] at the address,
+    /// allowing custom account contracts to retain their implementation of `__check_auth`.
+    pub fn auth_entry(
+        &self,
+        address: &Address,
+        invoke: &MockAuthInvoke,
+    ) -> xdr::SorobanAuthorizationEntry {
+        let mock_auth = MockAuth { address, invoke };
+        (&mock_auth).into()
+    }
+}
+
+/// Error returned when a custom account contract refuses authorization.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum CustomAccountError {
+    Denied = 1,
+}
+
+/// A minimal smart-wallet / custom account contract that implements [`CustomAccountInterface`].
+///
+/// It can be dynamically toggled to approve or deny authorization checks via `set_allowed`.
+#[contract]
+pub struct CustomAccountContract;
+
+#[contractimpl]
+impl CustomAccountContract {
+    pub fn set_allowed(env: Env, allowed: bool) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("allow"), &allowed);
+    }
+}
+
+#[contractimpl]
+impl CustomAccountInterface for CustomAccountContract {
+    type Signature = Val;
+    type Error = CustomAccountError;
+
+    fn __check_auth(
+        env: Env,
+        _signature_payload: Hash<32>,
+        _signatures: Val,
+        _auth_contexts: Vec<Context>,
+    ) -> Result<(), CustomAccountError> {
+        let allowed: bool = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("allow"))
+            .unwrap_or(true);
+        if allowed {
+            Ok(())
+        } else {
+            Err(CustomAccountError::Denied)
+        }
+    }
+}
+
+/// A mock token contract that allows configuring custom `decimals()` and records whether
+/// `decimals()` was ever called during contract execution.
+#[contract]
+pub struct MockTokenWithDecimals;
+
+#[contractimpl]
+impl MockTokenWithDecimals {
+    pub fn initialize(env: Env, decimals: u32) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("dec"), &decimals);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("read"), &false);
+    }
+
+    pub fn decimals(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("read"), &true);
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("dec"))
+            .unwrap_or(7)
+    }
+
+    pub fn decimals_were_read(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("read"))
+            .unwrap_or(false)
+    }
+
+    pub fn reset_decimals_read(env: Env) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("read"), &false);
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage().persistent().get(&id).unwrap_or(0)
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(bal + amount));
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
+        assert!(from_bal >= amount, "insufficient balance");
+        env.storage().persistent().set(&from, &(from_bal - amount));
+
+        let to_bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(to_bal + amount));
     }
 }

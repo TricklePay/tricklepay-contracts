@@ -195,26 +195,20 @@ seconds, matching the ledger clock.
 
 ### Read-only view functions
 
-| View | Return type | Errors | Description |
-| ---- | ----------- | ------ | ----------- |
-| `get_stream(id)` | `Stream` | `StreamNotFound` | Fetch the full stream record. |
-| `get_streams(ids)` | `Vec<Option<Stream>>` | `BatchTooLarge` | Fetch multiple stream records (up to `MAX_BATCH_SIZE` IDs) in request order; returns `None` for unknown or expired IDs. |
-| `cancel_preview(id)` | `Settlement` | `StreamNotFound`, `AlreadyCancelled`, `StreamAlreadyCompleted` | Returns the settlement amounts (`refund` to sender, `recipient_remaining` to recipient) a cancel would produce at the current ledger time without mutating state. |
-| `stream_exists(id)` | `bool` | — | Check whether a stream record exists, including cancelled or completed streams. |
-| `withdrawable(id)` | `i128` | `StreamNotFound` | Amount vested but not yet withdrawn. |
-| `vested(id)` | `i128` | `StreamNotFound` | Total amount vested at the current ledger time. |
-| `vested_at(id, timestamp)` | `i128` | `StreamNotFound` | Project the vested amount at a specified Unix timestamp. |
-| `locked(id)` | `i128` | `StreamNotFound` | Amount not yet vested at the current ledger time. |
-| `progress(id)` | `u32` | `StreamNotFound` | Vesting progress in basis points, from `0` to `10000`. |
-| `status(id)` | `StreamStatus` | `StreamNotFound` | Lifecycle status at the current ledger time. |
-| `stream_count()` | `u64` | — | Number of streams created so far. |
-| `max_amount()` | `i128` | — | Maximum amount accepted by `create_stream`. |
-
-`MAX_BATCH_SIZE` is fixed at `20`. Calling `get_streams` with more than 20 IDs fails with `StreamError::BatchTooLarge` (code 14). Both `get_streams` and `cancel_preview` are read-only views that do not modify ledger storage, emit contract events, or extend storage TTL.
-
-`cancel_preview(id)` computes the exact settlement amounts without sender authorization:
-- `refund`: the unvested amount that would be returned to the sender.
-- `recipient_remaining`: the vested amount that would remain claimable by the recipient.
+| View | Return type | Description |
+| ---- | ----------- | ----------- |
+| `get_stream(id)` | `Stream` | Fetch the full stream record. |
+| `cancel_preview(id)` | `Settlement` | Preview sender refund and recipient remaining balance if cancelled at current ledger time without modifying state. |
+| `get_streams(ids)` | `Vec<Option<Stream>>` | Fetch up to 20 streams in input order (`None` for missing or archived streams). |
+| `stream_exists(id)` | `bool` | Check whether a stream record exists, including cancelled or completed streams. |
+| `withdrawable(id)` | `i128` | Amount vested but not yet withdrawn. |
+| `vested(id)` | `i128` | Total amount vested at the current ledger time. |
+| `vested_at(id, timestamp)` | `i128` | Project the vested amount at a specified Unix timestamp. |
+| `locked(id)` | `i128` | Amount not yet vested at the current ledger time. |
+| `progress(id)` | `u32` | Vesting progress in basis points, from `0` to `10000`. |
+| `status(id)` | `StreamStatus` | Lifecycle status at the current ledger time. |
+| `stream_count()` | `u64` | Number of streams created so far. |
+| `max_amount()` | `i128` | Maximum amount accepted by `create_stream`. |
 
 `vested_at(id, timestamp)` uses the same calculation as `vested(id)` when
 `timestamp` equals the current ledger time. Times before the start or cliff
@@ -223,28 +217,62 @@ cancelled stream, timestamps at or after cancellation return the amount vested
 when it was cancelled. `stream_exists(id)` only checks whether a record is
 stored; it does not write state or publish events.
 
-### Dashboard batch querying with `get_streams`
+### Stream lifecycle and status transitions
 
-Dashboards displaying multiple streams should query `get_streams` to fetch up to 20 records in a single RPC round-trip rather than querying `get_stream` in a loop:
+A stream's lifecycle is represented by `StreamStatus`, pure logic derived from the stream's schedule (`start_time`, `end_time`), the `cancelled` boolean, and the current ledger timestamp (`now`). Its transitions and triggers are asserted in [`status.rs`](contracts/stream/src/status.rs):
 
-```typescript
-import { StreamContractClient } from "@tricklepay/sdk";
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: create_stream (now < start_time)
+    [*] --> Streaming: create_stream (start_time <= now < end_time)
 
-// Fetch up to MAX_BATCH_SIZE (20) streams in a single batch
-const ids = [0n, 1n, 2n, 3n];
-const streams = await client.get_streams({ ids });
+    Pending --> Streaming: [Time-driven] Ledger time reaches start_time (now >= start_time)
+    Pending --> Cancelled: [Transaction] sender calls cancel() (refunds 100% of deposit)
 
-for (let i = 0; i < ids.length; i++) {
-  const stream = streams[i];
-  if (!stream) {
-    console.log(`Stream ${ids[i]} not found or archived`);
-    continue;
-  }
-  console.log(`Stream #${ids[i]}: total=${stream.total_amount}, withdrawn=${stream.withdrawn}`);
-}
+    Streaming --> Completed: [Time-driven] Ledger time reaches end_time (now >= end_time)
+    Streaming --> Cancelled: [Transaction] sender calls cancel() (refunds unvested; freezes vested)
+
+    Completed --> [*]: Terminal state (cancel rejected: StreamAlreadyCompleted)
+    Cancelled --> [*]: Terminal state (permanent: cancel rejected: AlreadyCancelled)
 ```
 
-Missing or expired IDs return `None` (or `null` in JavaScript) at their respective index without failing the batch. If more than 20 IDs are passed, the contract returns `BatchTooLarge` (code 14).
+Key lifecycle rules:
+1. **Time-driven vs. Transaction-driven**:
+   - `Pending -> Streaming` and `Streaming -> Completed` transitions are **time-driven**. They occur automatically as ledger time advances past `start_time` and `end_time` respectively, requiring zero transactions or storage updates.
+   - Transitions into `Cancelled` are **transaction-driven**. They require an authenticated on-chain invocation of `cancel(id)` by the stream's `sender`.
+2. **Cancellation is permanent**:
+   - Once cancelled (`cancelled == true`), `status(id)` permanently returns `StreamStatus::Cancelled` across all future timestamps.
+   - Calling `cancel` on an already cancelled stream returns `StreamError::AlreadyCancelled` (code 6).
+3. **Completed streams cannot be cancelled**:
+   - Once ledger time reaches or passes `end_time` (`now >= end_time`), a stream is `Completed`.
+   - Any subsequent call to `cancel` is rejected with `StreamError::StreamAlreadyCompleted` (code 9) because all funds have already vested.
+4. **Cliff does not alter status**:
+   - The optional `cliff_time` gates token withdrawal eligibility, not the lifecycle status. A stream before its cliff reports `StreamStatus::Streaming` as long as `now >= start_time`.
+
+### Storage TTL extension behaviour of view functions
+
+Not all view functions extend storage TTL. The contract deliberately distinguishes between individual stream reads and bulk/preview views:
+
+| View Function | Access Helper | Extends TTL? | Rationale |
+| :--- | :--- | :--- | :--- |
+| `get_stream(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Individual stream inspection; keeps active streams alive for participants. |
+| `withdrawable(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Standard withdrawal polling by recipient. |
+| `vested(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Real-time vesting calculation for individual stream. |
+| `vested_at(id, timestamp)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Schedule projection for individual stream. |
+| `locked(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Unvested balance query for individual stream. |
+| `progress(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Progress indicator query for individual stream. |
+| `status(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Status enum derivation for individual stream. |
+| `cancel_preview(id)` | `storage::get_stream_readonly` | **No** | Off-chain simulation preview; side-effect-free, emits no ledger writes. |
+| `get_streams(ids)` | `storage::get_stream_readonly` | **No** | Batch dashboard/indexer queries; avoids multi-entry write fees and keeps dormant streams expiring. |
+| `stream_exists(id)` | `storage::has_stream` | **No** | Existence check; reads presence only without loading full record. |
+| `stream_count()` | `storage::stream_count` | **No** | Instance counter read; instance TTL is extended only on `create_stream`. |
+| `max_amount()` | Pure constant | **No** | Constant return (`i64::MAX`); does not access storage. |
+
+**Rationale for read-only variants:**
+- **`get_streams(ids)`**: Designed for dashboards, indexers, and backfill workers querying up to 20 streams per call. Extending TTL on batch reads would generate up to 20 persistent ledger writes per call, significantly inflating storage write fees and write footprint. Furthermore, bulk indexer crawls should not indefinitely postpone the archival of abandoned, cancelled, or completed streams.
+- **`cancel_preview(id)`**: Previews simulate the cancellation outcome for frontends prior to transaction signing. Previews require no authorization, emit no events, and must not incur storage write charges during off-chain RPC simulation.
+- **`stream_exists(id)`**: Key presence check only, avoiding deserialization and storage extension costs.
+
 
 ### Example schedule
 
@@ -686,8 +714,9 @@ function was called. It lives in two places:
 | `cancellation.rs` | `cancel`: the vested/refund split, boundary timing (start, cliff, end), rejecting a second cancel or one after completion | `cancel_refunds_unvested_and_preserves_vested`, `cancel_with_cliff_not_reached`, `cancel_on_stream_at_end_time_is_rejected`, `test_repeated_cancel_fails` |
 | `views.rs`        | Read-only queries, including timestamp projections, stream existence, and the amount ceiling; no state or event side effects | `vested_at_projects_the_schedule_and_freezes_after_cancellation`, `stream_exists_reports_existing_unknown_cancelled_and_completed_streams`, `max_amount_view_returns_i64_max` |
 | `documentation.rs` | README error-code table matches every `StreamError` variant and code | `readme_error_table_matches_stream_error_variants_and_codes` |
+| `budget.rs`       | Measured resource costs and budget regression ceilings for `create_stream`, `withdraw`, `cancel`, and batch reads | `create_stream_resource_budget_stays_within_ceiling`, `withdraw_resource_budget_stays_within_ceiling`, `cancel_resource_budget_stays_within_ceiling`, `get_streams_batch_20_ids_resource_budget_stays_within_ceiling` |
 | `events.rs`       | Event ordering and topic correctness for every entry point, and silence on a rejected call        | `create_emits_created_after_the_funding_transfer`, `lifecycle_events_follow_operation_order`, `created_event_topics_index_sender_and_recipient`, `rejected_create_publishes_no_events` |
-| `storage.rs`      | `DataKey` encoding across the id range, and persistent/instance TTL bumps on both sides of `BUMP_THRESHOLD` | `stream_ids_map_to_distinct_persistent_keys`, `a_stream_entry_ttl_decays_with_the_ledger_sequence`, `withdrawing_restores_a_decayed_stream_ttl`, `view_calls_do_not_extend_the_instance_ttl` |
+| `storage.rs`      | `DataKey` encoding across the id range, persistent/instance TTL bumps on both sides of `BUMP_THRESHOLD`, and read-only non-extension | `stream_ids_map_to_distinct_persistent_keys`, `a_stream_entry_ttl_decays_with_the_ledger_sequence`, `withdrawing_restores_a_decayed_stream_ttl`, `view_calls_do_not_extend_the_instance_ttl`, `get_streams_does_not_postpone_ttl_decay` |
 | `auth.rs`         | Authorization requirements for every mutating entry point                                         | `withdraw_requires_recipient_authorization`, `cancel_requires_sender_authorization`, `test_third_party_cannot_mutate_streams`              |
 | `helpers.rs`      | Not tests itself — the `StreamTest` fixture and clock helpers (`set_time`, `set_sequence`) every file above builds on | —                                                                                                                                             |
 
@@ -974,6 +1003,206 @@ cancellation time (vested minus already withdrawn), not the total that had
 vested. The sender refund covers only the unvested portion; tokens the recipient
 had already withdrawn are not returned.
 
+### RPC getEvents filter examples
+
+The Soroban RPC `getEvents` method allows off-chain indexers and user interfaces
+to query and stream contract events matching specific topic patterns.
+
+Topics are matched positionally according to the `#[topic]` layout defined in
+[`contracts/stream/src/events.rs`](contracts/stream/src/events.rs). When querying
+events, topic segments are passed as base64-encoded `ScVal` values or wildcards
+(`*` matches any topic in that position):
+
+- **Event symbol topic (index 0):** Every contract event begins with the symbol
+  name in lowercase:
+  - `"created"`: `AAAADwAAAAdjcmVhdGVkAA==`
+  - `"withdrawn"`: `AAAADwAAAAl3aXRoZHJhd24AAAA=`
+  - `"cancelled"`: `AAAADwAAAAljYW5jZWxsZWQAAAA=`
+- **Address topics (indices 1 & 2):** ScVal address values (e.g.,
+  `ScVal::Address`). In JSON-RPC requests, addresses are formatted as base64 XDR.
+
+#### 1. Filter `Created` events by sender
+
+The `Created` event defines topics `[symbol("created"), sender, recipient]`. To
+filter for all streams opened by a specific sender regardless of recipient, match
+the first two positions and pass `*` for the recipient:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"],
+          ["*"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 2. Filter `Created` events by recipient
+
+To filter for streams destined for a specific recipient from any sender, wildcard
+the sender position (index 1) and match the recipient in position 2:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAdjcmVhdGVkAA=="],
+          ["*"],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 3. Filter `Withdrawn` events by recipient
+
+The `Withdrawn` event defines topics `[symbol("withdrawn"), recipient]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAl3aXRoZHJhd24AAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+#### 4. Filter `Cancelled` events by sender
+
+The `Cancelled` event defines topics `[symbol("cancelled"), sender]`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "getEvents",
+  "params": {
+    "startLedger": 1000000,
+    "filters": [
+      {
+        "type": "contract",
+        "contractIds": ["CA...<STREAM_CONTRACT_ID>..."],
+        "topics": [
+          ["AAAADwAAAAljYW5jZWxsZWQAAAA="],
+          ["AAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"]
+        ]
+      }
+    ],
+    "pagination": {
+      "limit": 100
+    }
+  }
+}
+```
+
+> [!IMPORTANT]
+> **Filtering `Cancelled` events:** Unlike `Created`, the `Cancelled` event indexes
+> **only `sender`** as a topic. The recipient's share (`recipient_amount`) is
+> contained within the unindexed data payload rather than topics. As a result,
+> `Cancelled` events **can only be filtered by sender** at the RPC filter layer.
+> Indexers tracking recipient streams must either associate cancellations by stream
+> id from earlier `Created` events, scan unindexed event payloads, or query
+> `get_stream`.
+
+#### Retention window and pagination cursor
+
+- **History retention window:** Standard Soroban RPC nodes retain event history
+  only within the bounded `history-retention-window` (defaulting to 120,960 ledgers,
+  or approximately 7 days on networks with 5-second ledger intervals). Submitting a
+  request with `startLedger` older than the retention boundary returns an error
+  (`startLedger must be within the history retention window`). For long-term
+  historical indexing, applications should continuously ingest events or rely on an
+  archival datastore.
+- **Pagination cursors:** Responses include an opaque paging `cursor` string on
+  each page. When paginating across multiple result pages, pass the returned
+  cursor via `"pagination": { "cursor": "<cursor>", "limit": 100 }`. When `cursor`
+  is provided, `startLedger` **must be omitted** in subsequent continuation requests,
+  as the cursor uniquely encodes the ledger sequence and event offset.
+
+## Resource costs
+
+Integrators pay Soroban resource fees based on CPU instruction execution, RAM
+allocation, and persistent ledger storage footprint. The figures below reflect
+measured resource consumption in the local test environment using Soroban SDK
+`25.3.2` (Stellar protocol 22/23 test environment).
+
+### Measured resource usage
+
+| Entry point | CPU instructions | Memory (bytes) | Read entries | Write entries | Operations & Footprint |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
+| `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
+| `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
+| `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
+| `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
+| `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
+| `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
+
+\* *`get_stream` (and other individual view queries) does not write stream data, but
+issues a TTL extension entry if remaining entry lifetime has decayed below
+`BUMP_THRESHOLD` (103,680 ledgers). In contrast, batch reads (`get_streams`) and
+simulation queries (`cancel_preview`) deliberately use `storage::get_stream_readonly`
+and never write state or extend TTL.*
+
+### Measurement method and environment
+
+- **SDK version:** Soroban SDK `25.3.2` with native testing utilities enabled
+  (`features = ["testutils"]`).
+- **CPU & Memory:** Measured via `env.cost_estimate().budget().cpu_instruction_cost()`
+  and `env.cost_estimate().budget().memory_bytes_cost()`, capturing the CPU
+  instruction cycles and memory byte allocations across the host invocation.
+- **Ledger entries:** Metered via `env.cost_estimate().resources()`, counting total
+  accessed entries (`disk_read_entries + memory_read_entries`) and modified entries
+  (`write_entries`).
+- **Regression test suite:** To prevent silent resource bloat, the contract test
+  suite includes dedicated budget ceiling assertions in
+  [`tests/budget.rs`](contracts/stream/src/tests/budget.rs). Each test verifies that
+  execution stays within conservative ceilings and prints the measured value upon
+  failure so that limits can only be raised deliberately.
+
 ## Reading the contract interface
 
 The contract's public interface — every entry point name, its parameter names
@@ -1020,7 +1249,9 @@ fn create_stream(sender: address, recipient: address, token: address,
 fn withdraw(id: u64) -> result<i128, error<contract>>
 fn withdraw_amount(id: u64, amount: i128) -> result<i128, error<contract>>
 fn cancel(id: u64) -> result<i128, error<contract>>
+fn cancel_preview(id: u64) -> result<settlement, error<contract>>
 fn get_stream(id: u64) -> result<stream, error<contract>>
+fn get_streams(ids: vec<u64>) -> result<vec<option<stream>>, error<contract>>
 fn stream_exists(id: u64) -> bool
 fn withdrawable(id: u64) -> result<i128, error<contract>>
 fn vested(id: u64) -> result<i128, error<contract>>
@@ -1059,6 +1290,375 @@ stellar contract info interface \
 The `stellar` binary used here is the [Stellar CLI](https://github.com/stellar/stellar-cli), pinned to version `25.2.0` for compatibility with Soroban SDK `25.3.2`.
 To reproduce a deployment artifact, use the same exact Rust compiler version
 and target that were used to build the deployed WASM.
+
+## JavaScript SDK examples
+
+Integrators building frontends or backend services interact with the contract via the JavaScript SDK ([`@stellar/stellar-sdk`](https://www.npmjs.com/package/@stellar/stellar-sdk)).
+
+> **SDK Version Compatibility**: The examples below were verified and checked against **`@stellar/stellar-sdk` v13.1.0** (compatible with Soroban Protocol 21/22/25).
+
+### Setup and initialization
+
+```javascript
+import {
+  rpc,
+  Contract,
+  TransactionBuilder,
+  Networks,
+  nativeToScVal,
+  scValToNative,
+  xdr,
+} from '@stellar/stellar-sdk';
+
+const RPC_URL = 'https://soroban-testnet.stellar.org';
+const NETWORK_PASSPHRASE = Networks.TESTNET;
+const CONTRACT_ID = 'C...'; // 56-character contract address
+
+const server = new rpc.Server(RPC_URL);
+const contract = new Contract(CONTRACT_ID);
+
+/**
+ * Helper to simulate a read-only view function and decode its return value.
+ */
+async function callView(callerKeypair, method, args = []) {
+  const account = await server.getAccount(callerKeypair.publicKey());
+  const tx = new TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed: ${sim.error}`);
+  }
+  return scValToNative(sim.result.retval);
+}
+
+/**
+ * Helper to submit a mutating transaction and wait for inclusion.
+ */
+async function invokeContract(signerKeypair, method, args = []) {
+  const account = await server.getAccount(signerKeypair.publicKey());
+  let tx = new TransactionBuilder(account, {
+    fee: '100',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const preparedTx = await server.prepareTransaction(tx);
+  preparedTx.sign(signerKeypair);
+
+  const sendResponse = await server.sendTransaction(preparedTx);
+  if (sendResponse.status !== 'PENDING') {
+    throw new Error(`Transaction submission failed: ${JSON.stringify(sendResponse)}`);
+  }
+
+  // Poll for completion
+  let statusResponse = await server.getTransaction(sendResponse.hash);
+  while (statusResponse.status === 'NOT_FOUND') {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    statusResponse = await server.getTransaction(sendResponse.hash);
+  }
+
+  if (statusResponse.status !== 'SUCCESS') {
+    throw new Error(`Transaction failed: ${statusResponse.resultXdr}`);
+  }
+
+  return scValToNative(statusResponse.returnValue);
+}
+```
+
+### Mutating entry points
+
+All mutating calls require appropriate authorization:
+- `create_stream` and `cancel` require authorization from `sender`.
+- `withdraw` and `withdraw_amount` require authorization from `recipient`.
+
+#### 1. `create_stream`
+Opens a new token stream and pulls `total_amount` into the contract.
+
+```javascript
+// Argument types:
+// sender: Address
+// recipient: Address
+// token: Address
+// total_amount: i128 (BigInt, base units)
+// start_time: u64 (BigInt, Unix seconds)
+// end_time: u64 (BigInt, Unix seconds)
+// cliff_time: u64 (BigInt, Unix seconds, cliff_time == start_time for no-cliff)
+
+const streamId = await invokeContract(senderKeypair, 'create_stream', [
+  nativeToScVal(senderKeypair.publicKey(), { type: 'address' }),
+  nativeToScVal('G_RECIPIENT_ADDRESS...', { type: 'address' }),
+  nativeToScVal('C_TOKEN_CONTRACT_ADDRESS...', { type: 'address' }),
+  nativeToScVal(1_000_000_000n, { type: 'i128' }), // 1,000 tokens (7 decimals)
+  nativeToScVal(1735689600n, { type: 'u64' }),     // 2025-01-01 00:00:00 UTC
+  nativeToScVal(1767225600n, { type: 'u64' }),     // 2026-01-01 00:00:00 UTC
+  nativeToScVal(1735689600n, { type: 'u64' }),     // No cliff (cliff_time == start_time)
+]);
+console.log('Opened stream ID:', streamId); // returns BigInt (u64)
+```
+
+#### 2. `withdraw`
+Transfers the recipient's full accrued withdrawable balance to `recipient`.
+
+```javascript
+// Argument types:
+// id: u64 (BigInt)
+
+const withdrawnAmount = await invokeContract(recipientKeypair, 'withdraw', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Withdrawn amount:', withdrawnAmount); // returns BigInt (i128)
+```
+
+#### 3. `withdraw_amount`
+Transfers a partial amount up to the available withdrawable balance.
+
+```javascript
+// Argument types:
+// id: u64 (BigInt)
+// amount: i128 (BigInt, base units)
+
+const partialAmount = 250_000_000n;
+const paidAmount = await invokeContract(recipientKeypair, 'withdraw_amount', [
+  nativeToScVal(streamId, { type: 'u64' }),
+  nativeToScVal(partialAmount, { type: 'i128' }),
+]);
+console.log('Transferred amount:', paidAmount); // returns BigInt (i128)
+```
+
+#### 4. `cancel`
+Cancels the stream, freezes accrued vesting for recipient withdrawal, and refunds unvested remainder to sender.
+
+```javascript
+// Argument types:
+// id: u64 (BigInt)
+
+const refundedToSender = await invokeContract(senderKeypair, 'cancel', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Refunded to sender:', refundedToSender); // returns BigInt (i128)
+```
+
+### Read-only view functions
+
+Views do not mutate state and are executed using transaction simulation (`server.simulateTransaction`).
+
+#### 1. `get_stream` (extends TTL if below bump threshold)
+Fetches the full `Stream` record.
+
+```javascript
+// Argument: id: u64
+const stream = await callView(callerKeypair, 'get_stream', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Stream record:', {
+  sender: stream.sender,
+  recipient: stream.recipient,
+  token: stream.token,
+  total_amount: stream.total_amount, // bigint
+  withdrawn: stream.withdrawn,       // bigint
+  start_time: stream.start_time,     // bigint
+  end_time: stream.end_time,         // bigint
+  cliff_time: stream.cliff_time,     // bigint
+  cancelled: stream.cancelled,       // boolean
+});
+```
+
+#### 2. `cancel_preview` (does not extend TTL)
+Simulates cancellation settlement at the current ledger time without modifying state.
+
+```javascript
+// Argument: id: u64
+const preview = await callView(callerKeypair, 'cancel_preview', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Settlement preview:', {
+  recipient_remaining: preview.recipient_remaining, // bigint (vested claimable)
+  refund: preview.refund,                           // bigint (refund to sender)
+});
+```
+
+#### 3. `get_streams` (does not extend TTL)
+Batch-reads up to 20 streams in input order. Missing or archived stream IDs return `null`.
+
+```javascript
+// Argument: ids: Vec<u64>
+const batchIds = [0n, 1n, 2n];
+const streams = await callView(callerKeypair, 'get_streams', [
+  nativeToScVal(batchIds, { type: 'vec' }),
+]);
+// returns (Stream | null)[]
+streams.forEach((item, idx) => {
+  console.log(`Stream ${batchIds[idx]}:`, item ? `Total ${item.total_amount}` : 'Missing/Archived');
+});
+```
+
+#### 4. `stream_exists` (does not extend TTL)
+Checks whether a stream record exists.
+
+```javascript
+// Argument: id: u64
+const exists = await callView(callerKeypair, 'stream_exists', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Exists:', exists); // boolean
+```
+
+#### 5. `withdrawable` (extends TTL if below bump threshold)
+Queries the amount vested but not yet withdrawn.
+
+```javascript
+// Argument: id: u64
+const available = await callView(callerKeypair, 'withdrawable', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Withdrawable amount:', available); // bigint
+```
+
+#### 6. `vested` (extends TTL if below bump threshold)
+Queries total amount vested up to current ledger time.
+
+```javascript
+// Argument: id: u64
+const vestedAmount = await callView(callerKeypair, 'vested', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Total vested:', vestedAmount); // bigint
+```
+
+#### 7. `vested_at` (extends TTL if below bump threshold)
+Projects vested amount at a specific past or future Unix timestamp.
+
+```javascript
+// Arguments: id: u64, timestamp: u64
+const targetTimestamp = 1750000000n;
+const projectedVested = await callView(callerKeypair, 'vested_at', [
+  nativeToScVal(streamId, { type: 'u64' }),
+  nativeToScVal(targetTimestamp, { type: 'u64' }),
+]);
+console.log('Projected vested at timestamp:', projectedVested); // bigint
+```
+
+#### 8. `locked` (extends TTL if below bump threshold)
+Queries amount not yet vested.
+
+```javascript
+// Argument: id: u64
+const lockedAmount = await callView(callerKeypair, 'locked', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Locked amount:', lockedAmount); // bigint
+```
+
+#### 9. `progress` (extends TTL if below bump threshold)
+Queries vesting progress in basis points (0 to 10000, where 10000 = 100%).
+
+```javascript
+// Argument: id: u64
+const bps = await callView(callerKeypair, 'progress', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Progress BPS:', bps, `(${bps / 100}%)`); // number
+```
+
+#### 10. `status` (extends TTL if below bump threshold)
+Queries current lifecycle state ('Pending', 'Streaming', 'Completed', or 'Cancelled').
+
+```javascript
+// Argument: id: u64
+const streamStatus = await callView(callerKeypair, 'status', [
+  nativeToScVal(streamId, { type: 'u64' }),
+]);
+console.log('Stream status:', streamStatus); // 'Pending' | 'Streaming' | 'Completed' | 'Cancelled'
+```
+
+#### 11. `stream_count` (does not extend TTL)
+Queries total number of streams created.
+
+```javascript
+// Arguments: none
+const totalStreams = await callView(callerKeypair, 'stream_count', []);
+console.log('Total streams created:', totalStreams); // bigint
+```
+
+#### 12. `max_amount` (does not extend TTL)
+Queries maximum allowed `total_amount` (`i64::MAX`).
+
+```javascript
+// Arguments: none
+const maxAmountLimit = await callView(callerKeypair, 'max_amount', []);
+console.log('Max amount ceiling:', maxAmountLimit); // bigint (9223372036854775807n)
+```
+
+### Decoding `Created` events with `getEvents`
+
+Contract events emitted during execution can be polled or backfilled using `server.getEvents`.
+
+Below is an example of querying and decoding `Created` event topics and payload:
+
+```javascript
+import { rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
+
+/**
+ * Fetch and decode Created events for the contract.
+ */
+async function fetchCreatedEvents(server, contractId, startLedger) {
+  // Query events from RPC
+  const response = await server.getEvents({
+    startLedger,
+    filters: [
+      {
+        type: 'contract',
+        contractIds: [contractId],
+        topics: [
+          // Filter by event topic prefix: "created"
+          [xdr.ScVal.scvSymbol('created').toXDR('base64')],
+        ],
+      },
+    ],
+  });
+
+  const decodedEvents = response.events.map((event) => {
+    // 1. Decode topics
+    // Topic 0: symbol "created"
+    // Topic 1: sender Address
+    // Topic 2: recipient Address
+    const rawTopics = event.topic.map((t) => xdr.ScVal.fromXDR(t, 'base64'));
+    const topicSymbol = scValToNative(rawTopics[0]);
+    const sender = scValToNative(rawTopics[1]);
+    const recipient = scValToNative(rawTopics[2]);
+
+    // 2. Decode value map
+    // The contract emits events in data_format = "map", serialized as an ScVal map.
+    const rawValue = xdr.ScVal.fromXDR(event.value, 'base64');
+    const data = scValToNative(rawValue);
+
+    return {
+      id: event.id,
+      ledger: event.ledger,
+      ledgerClosedAt: event.ledgerClosedAt,
+      type: topicSymbol,
+      sender,
+      recipient,
+      streamId: data.id,             // bigint (u64)
+      token: data.token,             // string (Address)
+      totalAmount: data.total_amount,// bigint (i128)
+      startTime: data.start_time,    // bigint (u64)
+      endTime: data.end_time,        // bigint (u64)
+      cliffTime: data.cliff_time,    // bigint (u64)
+    };
+  });
+
+  return decodedEvents;
+}
+```
 
 ## Verifying a deployment
 

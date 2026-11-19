@@ -51,6 +51,42 @@
 //! to [`ENTRY_TTL`]. A stream that is abandoned for longer than `ENTRY_TTL`
 //! ledgers will be archived by the network; it must be restored off-chain
 //! before the contract can use it again.
+//!
+//! # Read Operations and Storage TTL
+//!
+//! Not every contract read extends a stream entry's persistent TTL. The contract
+//! deliberately distinguishes between individual stream queries and read-only
+//! views (such as batch reads and simulation previews):
+//!
+//! | Function | Access helper | Extends TTL? | Rationale |
+//! | :--- | :--- | :--- | :--- |
+//! | `get_stream` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Individual stream lookup by participant; keeps active stream alive. |
+//! | `withdrawable` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Standard withdrawal polling by recipient. |
+//! | `vested` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Real-time vesting calculation for individual stream. |
+//! | `vested_at` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Schedule projection for individual stream. |
+//! | `locked` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Unvested balance query for individual stream. |
+//! | `progress` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Progress indicator query for individual stream. |
+//! | `status` | [`get_stream`] | **Yes** (if < [`BUMP_THRESHOLD`]) | Status enum derivation for individual stream. |
+//! | `cancel_preview` | [`get_stream_readonly`] | **No** | Off-chain simulation preview; side-effect-free, emits no writes. |
+//! | `get_streams` | [`get_stream_readonly`] | **No** | Batch dashboard/indexer queries; avoids multi-entry write fees and keeps dormant streams expiring. |
+//! | `stream_exists` | [`has_stream`] | **No** | Existence check; reads presence only without loading full record. |
+//! | `stream_count` | [`stream_count`] | **No** | Instance counter read; instance TTL is extended only on `create_stream`. |
+//!
+//! # Rationale for Read-Only Helpers
+//!
+//! 1. **Batch Read Gas & Storage Limits ([`get_streams`])**: Batch queries accept up to
+//!    20 stream IDs per invocation. If `get_streams` extended TTLs on each stream, a single
+//!    batch call could produce up to 20 persistent ledger writes, substantially inflating
+//!    the storage write footprint, CPU instruction cost, and transaction fees. Furthermore,
+//!    routine dashboard sweeps or indexer backfills over arbitrary or historical stream ranges
+//!    would unintentionally refresh dormant or completed streams that should naturally be archived.
+//! 2. **Simulation Fidelity ([`cancel_preview`])**: Cancellation previews are designed for
+//!    off-chain transaction simulation by user interfaces before asking senders for signatures.
+//!    Previews require no authorization and should remain completely side-effect-free, avoiding
+//!    storage write charges during pre-flight RPC simulation.
+//! 3. **Presence Checks ([`has_stream`])**: `stream_exists` checks whether the storage key
+//!    exists in persistent storage without deserializing the struct or paying for a TTL extension.
+//!
 
 use soroban_sdk::{contracttype, Env};
 
