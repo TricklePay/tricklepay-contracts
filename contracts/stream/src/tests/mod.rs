@@ -18,6 +18,7 @@
 //! | `auth`            | Authorization requirements for every mutating entry point     |
 //! | `proptest_escrow` | Property tests for escrow balance invariant                   |
 //! | `reentrancy`      | Token re-entrancy protection tests                            |
+//! | `wasm_lifecycle`  | Stream lifecycle tests executed against compiled WASM bytecode |
 
 pub mod helpers;
 
@@ -32,4 +33,5 @@ mod readme_examples;
 mod reentrancy;
 mod storage;
 mod views;
+mod wasm_lifecycle;
 mod withdrawal;
