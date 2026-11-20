@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -27,6 +27,9 @@ check-markdown-links: ## Check relative Markdown files and heading anchors.
 
 test-markdown-links: ## Run unit tests for scripts/check-markdown-links.py.
 	python3 scripts/test_check_markdown_links.py
+
+test-deployment-scripts: ## Run unit tests for scripts/deploy.sh and scripts/verify-deployment.sh.
+	python3 scripts/test_deployment_scripts.py
 
 snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
 	stellar contract info interface --wasm $(WASM) --output rust > docs/interface.txt
