@@ -51,6 +51,9 @@ contract.
 
 ### Added
 
+- **ABI:** Added `rate_per_second(id) -> i128`, rounding down by stream duration and returning `0` for cancelled streams.
+- **ABI:** Added `withdrawable_many(ids) -> Vec<i128>`, returning zero for unknown ids and enforcing `MAX_BATCH_SIZE`.
+- **ABI:** Added `withdraw_many(ids) -> Vec<i128>` with per-stream transfers and events, one authorization per distinct recipient, and `NothingToWithdraw` when the batch pays nothing.
 - **ABI:** Added `withdraw_to(id, destination, amount) -> i128` entry point allowing the stream recipient to withdraw vested tokens directly to a designated address.
 - **ABI:** Extended `Withdrawn` event payload with `destination: Address` recording the address receiving the transferred tokens.
 - **non-ABI:** Accepted `docs/DESIGN_WITHDRAW_TO.md` specifying `withdraw_to` semantics, authorization, and event format.

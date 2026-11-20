@@ -71,6 +71,91 @@ fn withdraw_at_exact_end() {
 }
 
 #[test]
+fn withdraw_many_pays_streams_in_order_with_one_transfer_per_stream() {
+    let t = StreamTest::setup(4_000);
+    t.set_time(100);
+    let first_id = t.open_default_stream(1_000);
+    let second_id = t.open_default_stream(1_000);
+    let other_recipient = Address::generate(&t.env);
+    let other_id = t.contract.create_stream(
+        &t.sender,
+        &other_recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    let ids = soroban_sdk::vec![&t.env, first_id, second_id, first_id, other_id];
+    let amounts = t.contract.withdraw_many(&ids);
+    let publishers = t.event_publishers();
+    assert_eq!(amounts, soroban_sdk::vec![&t.env, 500, 500, 0, 500]);
+    let auths = t.env.auths();
+    assert!(auths.iter().any(|(address, _)| address == &t.recipient));
+    assert!(auths.iter().any(|(address, _)| address == &other_recipient));
+    assert_eq!(t.token.balance(&t.recipient), 1_000);
+    assert_eq!(t.token.balance(&other_recipient), 500);
+    assert_eq!(t.contract.get_stream(&first_id).withdrawn, 500);
+    assert_eq!(t.contract.get_stream(&second_id).withdrawn, 500);
+    assert_eq!(t.contract.get_stream(&other_id).withdrawn, 500);
+    assert_eq!(
+        publishers,
+        soroban_sdk::vec![
+            &t.env,
+            t.token_address.clone(),
+            t.contract.address.clone(),
+            t.token_address.clone(),
+            t.contract.address.clone(),
+            t.token_address.clone(),
+            t.contract.address.clone(),
+        ]
+    );
+}
+
+#[test]
+fn withdraw_many_rejects_unknown_ids_atomically_and_requires_a_payout() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+    t.set_time(600);
+
+    let recipient_balance_before = t.token.balance(&t.recipient);
+    assert_eq!(
+        t.contract
+            .try_withdraw_many(&soroban_sdk::vec![&t.env, id, 999]),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(t.token.balance(&t.recipient), recipient_balance_before);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 0);
+    assert!(t.event_publishers().is_empty());
+
+    t.set_time(100);
+    assert_eq!(
+        t.contract.try_withdraw_many(&soroban_sdk::vec![&t.env, id]),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+    assert!(t.event_publishers().is_empty());
+}
+
+#[test]
+fn withdraw_many_respects_the_batch_limit() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+    let mut ids = soroban_sdk::Vec::new(&t.env);
+    for _ in 0..=crate::MAX_BATCH_SIZE {
+        ids.push_back(id);
+    }
+
+    assert_eq!(
+        t.contract.try_withdraw_many(&ids),
+        Err(Ok(StreamError::BatchTooLarge))
+    );
+}
+
+#[test]
 fn withdraw_amount_takes_a_partial_balance() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);

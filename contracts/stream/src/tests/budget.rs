@@ -47,6 +47,13 @@ const GET_STREAMS_20_CPU_CEILING: u64 = 1_200_000;
 const GET_STREAMS_20_MEM_CEILING: u64 = 650_000;
 const GET_STREAMS_20_READ_ENTRIES_CEILING: u32 = 25;
 
+/// `withdraw_many` at the maximum batch size, with one token transfer per stream.
+/// Measured: ~5,672,659 CPU instructions, ~1,347,808 memory bytes, 27 reads, 23 writes.
+const WITHDRAW_MANY_20_CPU_CEILING: u64 = 12_000_000;
+const WITHDRAW_MANY_20_MEM_CEILING: u64 = 4_500_000;
+const WITHDRAW_MANY_20_READ_ENTRIES_CEILING: u32 = 60;
+const WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING: u32 = 50;
+
 #[test]
 fn create_stream_resource_budget_stays_within_ceiling() {
     let t = StreamTest::setup(1_000);
@@ -261,5 +268,52 @@ fn get_streams_batch_20_ids_resource_budget_stays_within_ceiling() {
     assert_eq!(
         res.write_entries, 0,
         "get_streams is read-only and must never write ledger entries"
+    );
+}
+
+#[test]
+fn withdraw_many_batch_20_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(25_000);
+    t.set_time(100);
+
+    let mut ids = Vec::new(&t.env);
+    for _ in 0..20 {
+        ids.push_back(t.open_default_stream(1_000));
+    }
+
+    t.set_time(600);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let amounts = t.contract.withdraw_many(&ids);
+    assert_eq!(amounts.len(), 20);
+    assert_eq!(amounts.get(0), Some(500));
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+    assert!(
+        cpu <= WITHDRAW_MANY_20_CPU_CEILING,
+        "withdraw_many(20) CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        WITHDRAW_MANY_20_CPU_CEILING
+    );
+    assert!(
+        mem <= WITHDRAW_MANY_20_MEM_CEILING,
+        "withdraw_many(20) memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        WITHDRAW_MANY_20_MEM_CEILING
+    );
+    assert!(
+        total_reads <= WITHDRAW_MANY_20_READ_ENTRIES_CEILING,
+        "withdraw_many(20) read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        WITHDRAW_MANY_20_READ_ENTRIES_CEILING
+    );
+    assert!(
+        res.write_entries <= WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING,
+        "withdraw_many(20) write entries exceeded ceiling: measured {}, ceiling {}",
+        res.write_entries,
+        WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING
     );
 }

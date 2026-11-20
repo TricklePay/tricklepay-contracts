@@ -103,6 +103,13 @@ A stream is defined by a total amount and a window of time:
   instead and transfers exactly that, up to the same balance; whatever is left
   stays in the stream and keeps growing as more vests. The two can be mixed
   freely — draw a fixed sum each month, then sweep the remainder at the end.
+  `withdraw_many(ids)` pays multiple streams in one call, including streams
+  with different recipients (each distinct recipient authorizes once). Each
+  stream with a positive balance is transferred and emits its own event;
+  the returned amounts follow input order, zero-balance streams return `0`,
+  and only the first occurrence of a duplicate id can pay. Batches accept up to
+  20 ids. An unknown id fails the whole invocation, and a batch with no
+  positive payout returns `NothingToWithdraw`.
 - **Cancel** stops a stream early. The recipient keeps everything vested up to
   that moment; the unvested remainder is refunded to the sender. A cancelled
   stream's vested balance stays claimable.
@@ -224,6 +231,8 @@ seconds, matching the ledger clock.
 | `get_streams(ids)` | `Vec<Option<Stream>>` | Fetch up to 20 streams in input order (`None` for missing or archived streams). |
 | `stream_exists(id)` | `bool` | Check whether a stream record exists, including cancelled or completed streams. |
 | `withdrawable(id)` | `i128` | Amount vested but not yet withdrawn. |
+| `withdrawable_many(ids)` | `Vec<i128>` | Fetch up to 20 withdrawable amounts in input order; unknown ids return `0`. |
+| `rate_per_second(id)` | `i128` | Nominal vested token base units per second, rounded down; `0` for cancelled streams. |
 | `vested(id)` | `i128` | Total amount vested at the current ledger time. |
 | `vested_at(id, timestamp)` | `i128` | Project the vested amount at a specified Unix timestamp. |
 | `locked(id)` | `i128` | Amount not yet vested at the current ledger time. |
@@ -238,6 +247,14 @@ return zero, and times at or after the end return the full amount. For a
 cancelled stream, timestamps at or after cancellation return the amount vested
 when it was cancelled. `stream_exists(id)` only checks whether a record is
 stored; it does not write state or publish events.
+
+`rate_per_second(id)` is the integer quotient of `total_amount` divided by the
+stream duration in seconds. Any division remainder is not included in this
+nominal per-second rate; the existing vesting calculation still distributes
+the full `total_amount` by `end_time`. A cancelled stream reports a rate of
+`0`. `withdrawable_many(ids)` returns amounts in the input order, uses `0` for
+unknown ids, and rejects more than `MAX_BATCH_SIZE` ids with
+`BatchTooLarge`. It is read-only and does not extend storage TTL.
 
 ### Stream lifecycle and status transitions
 
@@ -279,6 +296,7 @@ Not all view functions extend storage TTL. The contract deliberately distinguish
 | :--- | :--- | :--- | :--- |
 | `get_stream(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Individual stream inspection; keeps active streams alive for participants. |
 | `withdrawable(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Standard withdrawal polling by recipient. |
+| `rate_per_second(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Individual rate query for a stream. |
 | `vested(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Real-time vesting calculation for individual stream. |
 | `vested_at(id, timestamp)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Schedule projection for individual stream. |
 | `locked(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Unvested balance query for individual stream. |
@@ -286,6 +304,7 @@ Not all view functions extend storage TTL. The contract deliberately distinguish
 | `status(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Status enum derivation for individual stream. |
 | `cancel_preview(id)` | `storage::get_stream_readonly` | **No** | Off-chain simulation preview; side-effect-free, emits no ledger writes. |
 | `get_streams(ids)` | `storage::get_stream_readonly` | **No** | Batch dashboard/indexer queries; avoids multi-entry write fees and keeps dormant streams expiring. |
+| `withdrawable_many(ids)` | `storage::get_stream_readonly` | **No** | Batch dashboard queries; does not write stream records or extend TTL. |
 | `stream_exists(id)` | `storage::has_stream` | **No** | Existence check; reads presence only without loading full record. |
 | `stream_count()` | `storage::stream_count` | **No** | Instance counter read; instance TTL is extended only on `create_stream`. |
 | `max_amount()` | Pure constant | **No** | Constant return (`i64::MAX`); does not access storage. |
@@ -1210,6 +1229,7 @@ measured resource consumption in the local test environment using Soroban SDK
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
 | `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
+| `withdraw_many` (20 ids) | ~5,672,659 | ~1,347,808 | 27 | 23 | One token transfer and `Withdrawn` event per positive stream payout |
 | `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
 | `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
 | `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
