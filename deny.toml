@@ -1,0 +1,95 @@
+# cargo-deny configuration for tricklepay-contracts
+# Checks licenses, dependency bans, advisories and crate sources.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# --- Security Advisories ---
+# Matches .cargo/audit.toml: ignore transitive Soroban host/dev-tool advisories
+# that do not affect the compiled contract WASM.
+[advisories]
+unused-ignored-advisory = "allow"
+ignore = [
+    # derivative 2.2.0 unmaintained (via ark-* / wasmi_core -> soroban-env-host).
+    "RUSTSEC-2024-0388",
+    # paste 1.0.15 unmaintained (via ark-ff/wasmi_core -> soroban-env-host).
+    "RUSTSEC-2024-0436",
+    # chrono 0.4.45 is unmaintained; no patched release exists.
+    "RUSTSEC-2026-0543",
+    # Test-host only: soroban-env-host -> elliptic-curve -> crypto-bigint 0.5.5.
+    # The patched 0.7.x line cannot be selected until soroban-env-host updates.
+    "RUSTSEC-2026-0387",
+    # Unsoundness in heapless 0.8, pulled by soroban-sdk -> stellar-strkey.
+    # The 0.9.x patch line is semver-incompatible with the SDK's dependency.
+    "RUSTSEC-2026-0574",
+    "RUSTSEC-2026-0575",
+    "RUSTSEC-2026-0576",
+    "RUSTSEC-2026-0577",
+    "RUSTSEC-2026-0578",
+    "RUSTSEC-2026-0579",
+    "RUSTSEC-2026-0580",
+    "RUSTSEC-2026-0581",
+    "RUSTSEC-2026-0582",
+    # spin 0.9.8 is yanked but required by soroban-wasmi -> soroban-env-host.
+    "spin@0.9.8",
+]
+
+# --- Licenses ---
+# The repository is MIT licensed and accepts standard permissive licenses used
+# by the Soroban SDK and cryptographic dependencies.
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+]
+confidence-threshold = 0.8
+
+# Per-crate license exceptions with explanatory comments.
+exceptions = [
+    # fiat-crypto provides formally verified arithmetic code under BSD-1-Clause.
+    # It is pulled transitively via k256 / p256 in soroban-env-host.
+    { allow = ["BSD-1-Clause"], crate = "fiat-crypto" },
+    # zerocopy provides zero-overhead memory layout casting under BSD-2-Clause.
+    # It is pulled transitively via soroban-env-common.
+    { allow = ["BSD-2-Clause"], crate = "zerocopy" },
+    # subtle and *dalek crates use BSD-3-Clause for constant-time cryptographic primitives.
+    { allow = ["BSD-3-Clause"], crate = "subtle" },
+    { allow = ["BSD-3-Clause"], crate = "curve25519-dalek" },
+    { allow = ["BSD-3-Clause"], crate = "ed25519-dalek" },
+    # unicode-ident uses Unicode-3.0 for unicode identifier classification in proc-macros.
+    { allow = ["Unicode-3.0"], crate = "unicode-ident" },
+    # byteorder and memchr are dual-licensed Unlicense / MIT for public domain fallback.
+    { allow = ["Unlicense"], crate = "byteorder" },
+    { allow = ["Unlicense"], crate = "memchr" },
+    # cfg_eval and visibility use the permissive Zlib license for proc-macro attributes.
+    { allow = ["Zlib"], crate = "cfg_eval" },
+    { allow = ["Zlib"], crate = "visibility" },
+]
+
+[licenses.private]
+ignore = true
+
+# --- Dependency Bans ---
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow-workspace = true
+deny = []
+skip = []
+skip-tree = []
+
+# --- Sources ---
+# Ensure every crate is pulled from the official crates.io registry.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
