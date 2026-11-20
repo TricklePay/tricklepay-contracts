@@ -44,6 +44,10 @@ pub fn vested_amount(
     cliff_time: u64,
     now: u64,
 ) -> i128 {
+    // Equivalent mutant note for cargo-mutants:
+    // When now == start_time (and cliff_time <= start_time), replacing `<` with `<=`
+    // returns 0 early instead of computing (start_time - start_time) * total / duration = 0.
+    // Both branches return 0, making the mutant equivalent and unkillable.
     if now < cliff_time || now < start_time {
         return 0;
     }
@@ -68,6 +72,10 @@ pub fn vested_amount(
 /// ```
 pub fn withdrawable_amount(vested: i128, withdrawn: i128) -> i128 {
     let available = vested - withdrawn;
+    // Equivalent mutant note for cargo-mutants:
+    // When available == 0, replacing `<` with `<=` returns 0 from the if-branch instead
+    // of returning `available` (0) from the else-branch. Both return 0, making the mutant
+    // equivalent and unkillable.
     if available < 0 {
         0
     } else {

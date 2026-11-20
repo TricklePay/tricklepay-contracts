@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow mutants
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -62,6 +62,9 @@ size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
 
 test: ## Run the full test suite.
 	cargo test --locked
+
+mutants: ## Run mutation testing on pure modules (vesting.rs and status.rs).
+	cargo mutants --package tricklepay-stream --file contracts/stream/src/vesting.rs --file contracts/stream/src/status.rs
 
 fmt: ## Format the workspace in place.
 	cargo fmt

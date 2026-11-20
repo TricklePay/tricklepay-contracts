@@ -1,0 +1,56 @@
+name: Mutation Testing
+
+on:
+  schedule:
+    # Run weekly on Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutants:
+    name: Mutation testing (cargo-mutants)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-mutants-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-mutants (prebuilt)
+        env:
+          CARGO_MUTANTS_VERSION: "27.1.0"
+        run: |
+          archive="cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL "https://github.com/sourcefrog/cargo-mutants/releases/download/v${CARGO_MUTANTS_VERSION}/${archive}" -o "$RUNNER_TEMP/${archive}"
+          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/cargo-mutants" "$HOME/.cargo/bin/cargo-mutants"
+          cargo mutants --version
+
+      - name: Run mutation testing on pure modules
+        run: |
+          cargo mutants --package tricklepay-stream --file contracts/stream/src/vesting.rs --file contracts/stream/src/status.rs --in-place -- --lib -- vesting status || true
+
+      - name: Upload mutants report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: mutants-report
+          path: mutants.out/
+          retention-days: 30
