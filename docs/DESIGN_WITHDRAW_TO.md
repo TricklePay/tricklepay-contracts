@@ -1,6 +1,6 @@
 # Design: Withdraw to a Destination Address
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Related Issues:** #457  
 **Author:** Design Team  
 **Date:** 2026-10-20
@@ -333,6 +333,7 @@ No. The sender's agreement is with the recipient, not with where the recipient c
 
 ## Changelog
 
+- **2026-11-20:** Accepted and implemented via #636.
 - **2026-10-20:** Initial design proposal.
 
 ## References

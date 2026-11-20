@@ -993,14 +993,14 @@ streams for a given address without scanning every event.
 
 ### `Withdrawn`
 
-Emitted by both `withdraw` and `withdraw_amount` when tokens are transferred to
-the recipient.
+Emitted by `withdraw`, `withdraw_amount`, and `withdraw_to` when tokens are transferred.
 
-| Field       | Kind  | Type      | Description                               |
-| ----------- | ----- | --------- | ----------------------------------------- |
-| `recipient` | topic | `Address` | The address that received the tokens      |
-| `id`        | data  | `u64`     | The stream that was drawn from            |
-| `amount`    | data  | `i128`    | Number of tokens transferred in this call |
+| Field         | Kind  | Type      | Description                               |
+| ------------- | ----- | --------- | ----------------------------------------- |
+| `recipient`   | topic | `Address` | The address that authorized the withdrawal |
+| `id`          | data  | `u64`     | The stream that was drawn from            |
+| `amount`      | data  | `i128`    | Number of tokens transferred in this call |
+| `destination` | data  | `Address` | The address that received the tokens      |
 
 ### `Cancelled`
 

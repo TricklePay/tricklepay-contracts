@@ -18,6 +18,12 @@ pub trait Contract {
         env: soroban_sdk::Env,
         ids: soroban_sdk::Vec<u64>,
     ) -> Result<soroban_sdk::Vec<Option<Stream>>, StreamError>;
+    fn withdraw_to(
+        env: soroban_sdk::Env,
+        id: u64,
+        destination: soroban_sdk::Address,
+        amount: i128,
+    ) -> Result<i128, StreamError>;
     fn stream_count(env: soroban_sdk::Env) -> u64;
     fn topup_stream(
         env: soroban_sdk::Env,
@@ -133,5 +139,6 @@ pub struct Withdrawn {
     pub recipient: soroban_sdk::Address,
     pub id: u64,
     pub amount: i128,
+    pub destination: soroban_sdk::Address,
 }
 

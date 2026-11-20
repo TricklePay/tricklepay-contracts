@@ -114,6 +114,29 @@ properties). Proptest replays saved failures automatically when that property
 runs again. To rerun just one property, pass its test name to Cargo, for
 example `cargo test vested_between_zero_and_total`.
 
+## Fuzz testing
+
+The repository includes a fuzz target under `fuzz/` for the vesting arithmetic calculations (`vested_amount`, `withdrawable_amount`, and `settlement`) using [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz). Inputs are restricted to values that `create_stream` accepts (`total_amount > 0 && total_amount <= MAX_AMOUNT`, `start_time < end_time`, `cliff_time >= start_time && cliff_time <= end_time`).
+
+Install `cargo-fuzz` (requires a Rust nightly toolchain):
+
+```bash
+cargo install cargo-fuzz
+```
+
+Run the vesting arithmetic fuzz target:
+
+```bash
+cargo +nightly fuzz run vesting
+```
+
+To limit execution time (for example, 60 seconds):
+
+```bash
+cargo +nightly fuzz run vesting -- -max_total_time=60
+```
+
+
 If you intentionally changed the contract interface, update the snapshot before opening your PR:
 ```bash
 make wasm
