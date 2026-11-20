@@ -3,4 +3,4 @@
 # CI builds target/wasm32v1-none/release/tricklepay_stream.wasm and fails when
 # it is larger than this value. Raising the budget is an intentional change and
 # must be edited in the same pull request that grows the binary.
-45000
+46000

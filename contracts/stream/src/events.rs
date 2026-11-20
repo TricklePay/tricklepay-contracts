@@ -28,6 +28,7 @@ pub struct Withdrawn {
     pub recipient: Address,
     pub id: u64,
     pub amount: i128,
+    pub destination: Address,
 }
 
 /// Emitted when a stream is cancelled, reporting the recipient's remaining
@@ -69,12 +70,19 @@ pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
     .publish(env);
 }
 
-/// Publishes [`Withdrawn`] after transferring tokens to the recipient.
-pub(crate) fn publish_withdrawn(env: &Env, recipient: &Address, id: u64, amount: i128) {
+/// Publishes [`Withdrawn`] after transferring tokens to the recipient or destination.
+pub(crate) fn publish_withdrawn(
+    env: &Env,
+    recipient: &Address,
+    id: u64,
+    amount: i128,
+    destination: &Address,
+) {
     Withdrawn {
         recipient: recipient.clone(),
         id,
         amount,
+        destination: destination.clone(),
     }
     .publish(env);
 }

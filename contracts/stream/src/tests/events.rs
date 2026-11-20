@@ -57,6 +57,7 @@ fn withdraw_amount_emits_withdrawn_after_the_payout_transfer() {
             recipient: t.recipient.clone(),
             id,
             amount: transferred,
+            destination: t.recipient.clone(),
         }
         .to_xdr(&t.env, &t.contract.address),
     );
@@ -66,6 +67,38 @@ fn withdraw_amount_emits_withdrawn_after_the_payout_transfer() {
         t.token.balance(&t.recipient) - recipient_balance_before,
         transferred
     );
+}
+
+/// `withdraw_to` transfers tokens to the destination before announcing.
+#[test]
+fn withdraw_to_emits_withdrawn_after_the_payout_transfer() {
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Address;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let destination = Address::generate(&t.env);
+
+    t.set_time(600);
+    let dest_balance_before = t.token.balance(&destination);
+    let recipient_balance_before = t.token.balance(&t.recipient);
+    let withdrawn = t.contract.withdraw_to(&id, &destination, &300);
+
+    t.assert_latest_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount: withdrawn,
+            destination: destination.clone(),
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
+    assert_eq!(t.event_publishers(), t.transfer_then_announce());
+    assert_eq!(t.token.balance(&destination) - dest_balance_before, 300);
+    assert_eq!(t.token.balance(&t.recipient), recipient_balance_before);
 }
 
 /// `cancel` refunds the sender before announcing the cancellation.
@@ -153,6 +186,7 @@ fn withdrawn_event_topics_index_recipient() {
             recipient: t.recipient.clone(),
             id,
             amount,
+            destination: t.recipient.clone(),
         }
         .to_xdr(&t.env, &t.contract.address),
     );
@@ -220,6 +254,7 @@ fn lifecycle_events_carry_the_acting_party() {
             recipient: t.recipient.clone(),
             id,
             amount: 500,
+            destination: t.recipient.clone(),
         }
         .to_xdr(&t.env, &t.contract.address),
     );
@@ -311,6 +346,37 @@ fn rejected_withdraw_publishes_no_events() {
             recipient: t.recipient.clone(),
             id,
             amount: 0,
+            destination: t.recipient.clone(),
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+}
+
+/// A rejected `withdraw_to` publishes nothing.
+#[test]
+fn rejected_withdraw_to_publishes_no_events() {
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Address;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let destination = Address::generate(&t.env);
+
+    // Amount exceeds withdrawable (0 at start time)
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &100),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+
+    t.assert_no_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount: 100,
+            destination: destination.clone(),
         }
         .to_xdr(&t.env, &t.contract.address),
     );

@@ -51,6 +51,9 @@ contract.
 
 ### Added
 
+- **ABI:** Added `withdraw_to(id, destination, amount) -> i128` entry point allowing the stream recipient to withdraw vested tokens directly to a designated address.
+- **ABI:** Extended `Withdrawn` event payload with `destination: Address` recording the address receiving the transferred tokens.
+- **non-ABI:** Accepted `docs/DESIGN_WITHDRAW_TO.md` specifying `withdraw_to` semantics, authorization, and event format.
 - **ABI:** Added `topup_stream` entry point allowing the stream sender to deposit additional tokens, increasing `total_amount` while preserving duration and schedule (Option B: increase rate).
 - **ABI:** Emitted `ToppedUp` event (`sender` topic, `stream_id`, `added_amount`, `new_total_amount`, `new_end_time`) on successful stream top-up.
 - **non-ABI:** Accepted `docs/DESIGN_TOPUP.md` with resolved design decisions on top-up semantics and error handling.

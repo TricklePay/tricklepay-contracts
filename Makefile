@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow mutants coverage coverage-html
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts test-diff-interface
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -27,6 +27,12 @@ check-markdown-links: ## Check relative Markdown files and heading anchors.
 
 test-markdown-links: ## Run unit tests for scripts/check-markdown-links.py.
 	python3 scripts/test_check_markdown_links.py
+
+test-deployment-scripts: ## Run unit tests for scripts/deploy.sh and scripts/verify-deployment.sh.
+	python3 scripts/test_deployment_scripts.py
+
+test-diff-interface: ## Run unit tests for scripts/diff-interface.sh.
+	python3 scripts/test_diff_interface.py
 
 snapshot: wasm ## Regenerate the checked-in contract interface snapshot.
 	stellar contract info interface --wasm $(WASM) --output rust > docs/interface.txt
@@ -96,6 +102,9 @@ docs: ## Build crate documentation, treating warnings as errors.
 
 audit: ## Audit dependencies for known vulnerabilities.
 	cargo audit --deny warnings
+
+deny: ## Check licenses, bans, and sources with cargo-deny.
+	cargo deny check
 
 clean: ## Remove build artifacts.
 	cargo clean

@@ -1266,3 +1266,194 @@ fn fee_on_transfer_token_short_deposit_drains_concurrent_streams() {
     assert_eq!(stream_2.withdrawn, 0);
     assert_eq!(contract.status(&id_2), StreamStatus::Completed);
 }
+
+// ── withdraw_to tests ────────────────────────────────────────────────────────
+
+#[test]
+fn withdraw_to_happy_path_to_third_party() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let destination = Address::generate(&t.env);
+    t.set_time(600); // 500 vested
+
+    let withdrawn = t.contract.withdraw_to(&id, &destination, &300);
+    assert_eq!(withdrawn, 300);
+    assert_eq!(t.token.balance(&destination), 300);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 700);
+
+    let stream = t.contract.get_stream(&id);
+    assert_eq!(stream.withdrawn, 300);
+    assert_eq!(t.contract.withdrawable(&id), 200);
+}
+
+#[test]
+fn withdraw_to_destination_equals_recipient() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    let withdrawn = t.contract.withdraw_to(&id, &t.recipient, &400);
+    assert_eq!(withdrawn, 400);
+    assert_eq!(t.token.balance(&t.recipient), 400);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 400);
+    assert_eq!(t.contract.withdrawable(&id), 100);
+}
+
+#[test]
+fn withdraw_to_requires_recipient_authorization() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let destination = Address::generate(&t.env);
+    t.set_time(600);
+    t.contract.withdraw_to(&id, &destination, &250);
+
+    let auths = t.env.auths();
+    assert!(auths.iter().any(|(addr, _)| addr == &t.recipient));
+    assert!(!auths.iter().any(|(addr, _)| addr == &destination));
+}
+
+#[test]
+fn withdraw_to_zero_or_negative_amount_fails() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let destination = Address::generate(&t.env);
+    t.set_time(600);
+
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &0),
+        Err(Ok(StreamError::InvalidAmount))
+    );
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &-50),
+        Err(Ok(StreamError::InvalidAmount))
+    );
+}
+
+#[test]
+fn withdraw_to_contract_as_destination_fails() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &t.contract.address, &100),
+        Err(Ok(StreamError::InvalidParticipant))
+    );
+}
+
+#[test]
+fn withdraw_to_exceeding_balance_fails() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let destination = Address::generate(&t.env);
+    t.set_time(600); // 500 vested
+
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &501),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+}
+
+#[test]
+fn withdraw_to_nonexistent_stream_fails() {
+    let t = StreamTest::setup(1_000);
+    let destination = Address::generate(&t.env);
+
+    assert_eq!(
+        t.contract.try_withdraw_to(&999, &destination, &100),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn withdraw_to_then_cancel_preserves_accounting() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    let destination = Address::generate(&t.env);
+    t.set_time(600); // 500 vested
+
+    // Recipient withdraws 200 to destination
+    assert_eq!(t.contract.withdraw_to(&id, &destination, &200), 200);
+
+    // Sender cancels at time 600
+    // Vested is 500, refund is 500 (1000 - 500), recipient still has 300 claimable
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, 500);
+    assert_eq!(t.token.balance(&t.sender), 500);
+    assert_eq!(t.contract.withdrawable(&id), 300);
+
+    // Recipient withdraws remaining 300 to destination
+    assert_eq!(t.contract.withdraw_to(&id, &destination, &300), 300);
+    assert_eq!(t.token.balance(&destination), 500);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}

@@ -1,0 +1,22 @@
+[package]
+name = "tricklepay-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tricklepay-stream = { path = "../contracts/stream" }
+
+# Prevent this from interfering with workspace
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "vesting"
+path = "fuzz_targets/vesting.rs"
+test = false
+doc = false
