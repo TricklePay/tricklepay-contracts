@@ -1,21 +1,12 @@
 use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
 
-use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
 use crate::error::StreamError;
 use crate::events;
 use crate::status;
 use crate::storage;
 use crate::types::{Stream, StreamStatus};
 use crate::vesting;
-
-/// Maximum `total_amount` accepted when creating a stream.
-pub const MAX_AMOUNT: i128 = i64::MAX as i128;
-
-/// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
-pub const BPS_SCALE: u32 = 10_000;
-
-/// Maximum number of stream ids accepted by [`StreamContract::get_streams`].
-pub const MAX_BATCH_SIZE: u32 = 20;
 
 #[contract]
 pub struct StreamContract;

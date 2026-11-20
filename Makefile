@@ -88,6 +88,9 @@ docs: ## Build crate documentation, treating warnings as errors.
 audit: ## Audit dependencies for known vulnerabilities.
 	cargo audit --deny warnings
 
+deny: ## Check licenses, bans, and sources with cargo-deny.
+	cargo deny check
+
 clean: ## Remove build artifacts.
 	cargo clean
 
