@@ -189,6 +189,133 @@ fn stream_exists_reports_existing_unknown_cancelled_and_completed_streams() {
 }
 
 #[test]
+fn fresh_contract_handles_id_zero_and_extreme_ids() {
+    let t = StreamTest::setup(1_000);
+
+    // On a fresh contract before any streams are created:
+    assert_eq!(t.contract.stream_count(), 0);
+
+    // ID 0 does not exist yet
+    assert!(!t.contract.stream_exists(&0));
+    assert!(!t.contract.stream_exists(&1));
+    assert!(!t.contract.stream_exists(&u64::MAX));
+
+    // get_streams with 0, 1, and u64::MAX returns None for each
+    let query = vec![&t.env, 0, 1, u64::MAX];
+    let results = t.contract.get_streams(&query);
+    assert_eq!(results.len(), 3);
+    assert_eq!(results.get(0).unwrap(), None);
+    assert_eq!(results.get(1).unwrap(), None);
+    assert_eq!(results.get(2).unwrap(), None);
+
+    // Single-id views return StreamNotFound
+    assert_eq!(
+        t.contract.try_get_stream(&0),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        t.contract.try_get_stream(&u64::MAX),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn stream_exists_and_get_streams_at_extreme_and_counter_boundary_ids() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+
+    // Create 2 streams: ID 0 and ID 1. Current counter becomes 2.
+    let id_0 = t.open_default_stream(500);
+    let id_1 = t.open_default_stream(700);
+    assert_eq!(id_0, 0);
+    assert_eq!(id_1, 1);
+    assert_eq!(t.contract.stream_count(), 2);
+
+    let counter = t.contract.stream_count(); // 2
+    let one_past_counter = counter; // ID 2
+    let two_past_counter = counter + 1; // ID 3
+
+    // Existing streams assert true
+    assert!(t.contract.stream_exists(&id_0));
+    assert!(t.contract.stream_exists(&id_1));
+
+    // One past counter and extreme ids assert false
+    assert!(!t.contract.stream_exists(&one_past_counter));
+    assert!(!t.contract.stream_exists(&two_past_counter));
+    assert!(!t.contract.stream_exists(&(u64::MAX / 2)));
+    assert!(!t.contract.stream_exists(&(u64::MAX - 1)));
+    assert!(!t.contract.stream_exists(&u64::MAX));
+
+    // Batch get_streams asserting Some for valid ids and None for boundary / extreme ids
+    let query = vec![
+        &t.env,
+        id_0,
+        one_past_counter,
+        id_1,
+        two_past_counter,
+        u64::MAX - 1,
+        u64::MAX,
+    ];
+    let results = t.contract.get_streams(&query);
+    assert_eq!(results.len(), 6);
+    assert_eq!(results.get(0).unwrap().unwrap().total_amount, 500);
+    assert_eq!(results.get(1).unwrap(), None);
+    assert_eq!(results.get(2).unwrap().unwrap().total_amount, 700);
+    assert_eq!(results.get(3).unwrap(), None);
+    assert_eq!(results.get(4).unwrap(), None);
+    assert_eq!(results.get(5).unwrap(), None);
+}
+
+#[test]
+fn read_views_do_not_panic_for_any_u64_id() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let _id = t.open_default_stream(500);
+
+    let test_ids = [
+        0_u64,
+        1_u64,
+        2_u64,
+        3_u64,
+        99_u64,
+        1_000_u64,
+        i64::MAX as u64,
+        (i64::MAX as u64) + 1,
+        u64::MAX / 2,
+        u64::MAX - 100,
+        u64::MAX - 1,
+        u64::MAX,
+    ];
+
+    for &test_id in &test_ids {
+        // stream_exists never panics
+        let exists = t.contract.stream_exists(&test_id);
+        if test_id == 0 {
+            assert!(exists);
+        } else {
+            assert!(!exists);
+        }
+
+        // get_streams never panics
+        let batch = t.contract.get_streams(&vec![&t.env, test_id]);
+        assert_eq!(batch.len(), 1);
+        if test_id == 0 {
+            assert!(batch.get(0).unwrap().is_some());
+        } else {
+            assert_eq!(batch.get(0).unwrap(), None);
+        }
+
+        // try_get_stream never panics
+        let single = t.contract.try_get_stream(&test_id);
+        if test_id == 0 {
+            assert!(single.is_ok());
+        } else {
+            assert_eq!(single, Err(Ok(StreamError::StreamNotFound)));
+        }
+    }
+}
+
+#[test]
 fn vested_at_projects_the_schedule_and_freezes_after_cancellation() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);

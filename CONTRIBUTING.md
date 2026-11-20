@@ -68,6 +68,9 @@ The table below lists every target defined in the `Makefile`, along with its pur
 | `lint` | Runs Clippy across all targets and denies all warnings (`cargo clippy --all-targets -- -D warnings`). | Run before submitting code changes to catch lint issues. |
 | `lint-scripts` | Validates shell syntax with `bash -n` and lints all scripts in `scripts/` using ShellCheck. | Run whenever modifying or creating scripts in `scripts/`. |
 | `test` | Executes the complete test suite including unit tests and proptest invariant suites (`cargo test`). | Run during development and before submitting any pull request. |
+| `coverage` | Generates source-based test coverage report with per-file metrics (`cargo llvm-cov`). | Run to inspect test coverage across contract modules. |
+| `coverage-html` | Generates and opens an HTML test coverage report in the browser (`cargo llvm-cov --open`). | Run for detailed line-by-line visual coverage inspection. |
+| `mutants` | Runs mutation testing on pure modules `vesting.rs` and `status.rs` using `cargo-mutants`. | Run to verify test suite thoroughness on pure arithmetic and state logic. |
 | `audit` | Audits dependencies for known security vulnerabilities using `.cargo/audit.toml` (`cargo audit --deny warnings`). | Run when updating dependencies or before releasing. |
 | `check-markdown-links` | Scans relative Markdown links and heading anchors across documentation files for broken references. | Run when writing or editing documentation files. |
 | `test-markdown-links` | Runs unit tests for `scripts/check-markdown-links.py` (`python3 scripts/test_check_markdown_links.py`). | Run when modifying the Markdown link checker script. |

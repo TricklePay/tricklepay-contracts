@@ -69,6 +69,15 @@ size-budget: wasm ## Fail when the compiled WASM exceeds wasm-size-budget.txt.
 test: ## Run the full test suite.
 	cargo test --locked
 
+mutants: ## Run mutation testing on pure modules (vesting.rs and status.rs).
+	cargo mutants --package tricklepay-stream --file contracts/stream/src/vesting.rs --file contracts/stream/src/status.rs
+
+coverage: ## Generate test coverage reports using cargo-llvm-cov.
+	cargo llvm-cov --locked
+
+coverage-html: ## Generate HTML test coverage report and open in browser.
+	cargo llvm-cov --locked --open
+
 fmt: ## Format the workspace in place.
 	cargo fmt
 

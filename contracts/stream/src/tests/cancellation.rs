@@ -56,6 +56,147 @@ fn cancel_preview_matches_cancel_without_writing_or_publishing() {
 }
 
 #[test]
+fn cancel_preview_before_start_time_yields_full_refund() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(50);
+
+    // Create stream starting in the future at 200
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &200,
+        &1_200,
+        &200,
+    );
+
+    // Clock is at 100, which is strictly before start_time (200)
+    t.set_time(100);
+
+    // 1. Preview before start
+    let preview = t.contract.cancel_preview(&id);
+    assert_eq!(
+        preview,
+        Settlement {
+            refund: 1_000,
+            recipient_remaining: 0,
+        }
+    );
+    // Preview publishes no events
+    assert!(t.event_publishers().is_empty());
+
+    // 2. Real cancel at the same instant
+    let sender_balance_before = t.token.balance(&t.sender);
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, preview.refund);
+    assert_eq!(refund, 1_000);
+    assert_eq!(
+        t.token.balance(&t.sender) - sender_balance_before,
+        preview.refund
+    );
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.contract.withdrawable(&id), preview.recipient_remaining);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
+fn cancel_preview_before_unreached_cliff_yields_full_refund() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    // Stream with cliff at 600
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &600,
+    );
+
+    // Advance to 400: past start (100) but before cliff (600).
+    // Even though 30% of duration elapsed, nothing has vested.
+    t.set_time(400);
+
+    // 1. Preview before cliff
+    let preview = t.contract.cancel_preview(&id);
+    assert_eq!(
+        preview,
+        Settlement {
+            refund: 1_000,
+            recipient_remaining: 0,
+        }
+    );
+    // Preview publishes no events
+    assert!(t.event_publishers().is_empty());
+
+    // 2. Real cancel at the same instant
+    let sender_balance_before = t.token.balance(&t.sender);
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, preview.refund);
+    assert_eq!(refund, 1_000);
+    assert_eq!(
+        t.token.balance(&t.sender) - sender_balance_before,
+        preview.refund
+    );
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.contract.withdrawable(&id), preview.recipient_remaining);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
+fn cancel_preview_after_partial_withdrawal_deducts_withdrawn_from_recipient_remaining() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let id = t.open_default_stream(1_000);
+
+    // Midpoint: 500 vested. Recipient withdraws 200.
+    t.set_time(600);
+    let withdrawn = t.contract.withdraw_amount(&id, &200);
+    assert_eq!(withdrawn, 200);
+    assert_eq!(t.token.balance(&t.recipient), 200);
+
+    // 1. Preview at midpoint after 200 has been withdrawn:
+    // Total: 1000. Vested: 500. Withdrawn: 200.
+    // Unvested refund: 1000 - 500 = 500.
+    // Recipient remaining: 500 - 200 = 300.
+    let preview = t.contract.cancel_preview(&id);
+    assert_eq!(
+        preview,
+        Settlement {
+            refund: 500,
+            recipient_remaining: 300,
+        }
+    );
+    // Preview publishes no events
+    assert!(t.event_publishers().is_empty());
+
+    // 2. Real cancel at the same instant
+    let sender_balance_before = t.token.balance(&t.sender);
+    let refund = t.contract.cancel(&id);
+    assert_eq!(refund, preview.refund);
+    assert_eq!(refund, 500);
+    assert_eq!(
+        t.token.balance(&t.sender) - sender_balance_before,
+        preview.refund
+    );
+
+    // Recipient still has exactly recipient_remaining available
+    assert_eq!(t.contract.withdrawable(&id), preview.recipient_remaining);
+    assert_eq!(t.contract.withdrawable(&id), 300);
+
+    // Recipient can withdraw the remaining 300
+    let second_withdrawn = t.contract.withdraw(&id);
+    assert_eq!(second_withdrawn, preview.recipient_remaining);
+    assert_eq!(t.token.balance(&t.recipient), 500);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
 fn cancel_refunds_unvested_and_preserves_vested() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
