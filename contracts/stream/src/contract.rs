@@ -187,6 +187,81 @@ impl StreamContract {
         })
     }
 
+    /// Withdraw vested tokens to a specified destination address.
+    ///
+    /// Only the recipient may call this. Behaves like `withdraw_amount` but sends
+    /// the tokens to `destination` instead of the stream's stored `recipient`. The
+    /// stream's `withdrawn` counter is incremented by the amount transferred.
+    ///
+    /// Returns the amount transferred.
+    ///
+    /// # Authorization
+    ///
+    /// - Requires authorization from the stream's `recipient` (not from `destination`).
+    ///
+    /// # Validation
+    ///
+    /// - `destination` cannot be the stream contract's own address.
+    /// - `destination` can be the same as `stream.recipient`.
+    ///
+    /// # Errors
+    ///
+    /// - [`StreamError::StreamNotFound`] if `id` does not exist in storage.
+    /// - [`StreamError::InvalidAmount`] if `amount <= 0`.
+    /// - [`StreamError::InvalidParticipant`] if `destination` is the stream contract's own address.
+    /// - [`StreamError::InsufficientBalance`] if `amount` exceeds the withdrawable balance.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::testutils::Address as _;
+    /// # use soroban_sdk::{Address, Env};
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let destination = Address::generate(&env);
+    /// # let stream_id = 0u64;
+    /// let amount = client.withdraw_to(&stream_id, &destination, &500);
+    /// ```
+    pub fn withdraw_to(
+        env: Env,
+        id: u64,
+        destination: Address,
+        amount: i128,
+    ) -> Result<i128, StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        if destination == env.current_contract_address() {
+            return Err(StreamError::InvalidParticipant);
+        }
+
+        let vested = stream.vested_amount(env.ledger().timestamp());
+        let available = vesting::withdrawable_amount(vested, stream.withdrawn);
+        if amount > available {
+            return Err(StreamError::InsufficientBalance);
+        }
+
+        stream.withdrawn += amount;
+        storage::set_stream(&env, id, &stream);
+
+        transfer(
+            &env,
+            &stream.token,
+            &env.current_contract_address(),
+            &destination,
+            amount,
+        );
+
+        events::publish_withdrawn(&env, &stream.recipient, id, amount, &destination);
+
+        Ok(amount)
+    }
+
     /// Top up an existing stream by adding tokens.
     ///
     /// Only the sender may call this. The added amount is transferred from the
@@ -531,7 +606,7 @@ fn withdraw_with(
         amount,
     );
 
-    events::publish_withdrawn(env, &stream.recipient, id, amount);
+    events::publish_withdrawn(env, &stream.recipient, id, amount, &stream.recipient);
 
     Ok(amount)
 }
