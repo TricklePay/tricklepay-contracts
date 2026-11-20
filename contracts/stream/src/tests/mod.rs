@@ -31,5 +31,6 @@ mod proptest_escrow;
 mod readme_examples;
 mod reentrancy;
 mod storage;
+mod topup;
 mod views;
 mod withdrawal;

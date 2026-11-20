@@ -187,6 +187,71 @@ impl StreamContract {
         })
     }
 
+    /// Top up an existing stream by adding tokens.
+    ///
+    /// Only the sender may call this. The added amount is transferred from the
+    /// sender into the contract, increasing the stream's total while keeping
+    /// the end time and duration unchanged (Option B: increase rate).
+    ///
+    /// # Authorization
+    ///
+    /// - Requires authorization from the stream's `sender`.
+    ///
+    /// # Errors
+    ///
+    /// - [`StreamError::InvalidAmount`] if `added_amount <= 0`.
+    /// - [`StreamError::StreamNotFound`] if `id` does not match an existing stream.
+    /// - [`StreamError::AlreadyCancelled`] if the stream has already been cancelled.
+    /// - [`StreamError::StreamAlreadyCompleted`] if the stream is already complete (`now >= end_time`).
+    /// - [`StreamError::AmountTooLarge`] if `stream.total_amount + added_amount > MAX_AMOUNT`.
+    pub fn topup_stream(env: Env, id: u64, added_amount: i128) -> Result<(), StreamError> {
+        if added_amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.sender.require_auth();
+
+        if stream.cancelled {
+            return Err(StreamError::AlreadyCancelled);
+        }
+
+        let now = env.ledger().timestamp();
+        if now >= stream.end_time {
+            return Err(StreamError::StreamAlreadyCompleted);
+        }
+
+        let new_total = stream
+            .total_amount
+            .checked_add(added_amount)
+            .ok_or(StreamError::AmountTooLarge)?;
+
+        if new_total > MAX_AMOUNT {
+            return Err(StreamError::AmountTooLarge);
+        }
+
+        TokenClient::new(&env, &stream.token).transfer(
+            &stream.sender,
+            env.current_contract_address(),
+            &added_amount,
+        );
+
+        stream.total_amount = new_total;
+        storage::set_stream(&env, id, &stream);
+        storage::extend_instance_ttl(&env);
+
+        events::publish_topped_up(
+            &env,
+            &stream.sender,
+            id,
+            added_amount,
+            new_total,
+            stream.end_time,
+        );
+
+        Ok(())
+    }
+
     /// Cancel a stream and refund the unvested remainder to the sender.
     ///
     /// Only the sender may call this. Whatever has vested up to the current

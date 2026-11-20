@@ -182,6 +182,28 @@ sequenceDiagram
     Note over Recipient,StreamContract: Recipient can withdraw accrued vested amount anytime
 ```
 
+#### Top up stream (`topup_stream`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Sender
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+
+    Sender->>StreamContract: topup_stream(id, added_amount)
+    activate StreamContract
+    StreamContract->>StreamContract: validate stream active/pending & added_amount > 0
+    StreamContract->>TokenContract: transfer(from: sender, to: stream_contract, amount: added_amount)
+    activate TokenContract
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract->>StreamContract: total_amount += added_amount (rate increases)
+    StreamContract-->>Sender: emit ToppedUp(sender, id, added_amount, new_total, end_time)
+    StreamContract-->>Sender: return ok
+    deactivate StreamContract
+```
+
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
 `progress` reports the same ratio in basis points, from 0 to 10000, for
@@ -1004,6 +1026,18 @@ cancellation time (vested minus already withdrawn), not the total that had
 vested. The sender refund covers only the unvested portion; tokens the recipient
 had already withdrawn are not returned.
 
+### `ToppedUp`
+
+Emitted by `topup_stream` when a sender deposits additional tokens into an existing stream.
+
+| Field              | Kind  | Type      | Description                                                |
+| ------------------ | ----- | --------- | ---------------------------------------------------------- |
+| `sender`           | topic | `Address` | The address that topped up the stream                      |
+| `stream_id`        | data  | `u64`     | The stream that was topped up                              |
+| `added_amount`     | data  | `i128`    | Number of additional tokens deposited                      |
+| `new_total_amount` | data  | `i128`    | New cumulative total tokens locked in the stream           |
+| `new_end_time`     | data  | `u64`     | Stream end time (preserved under rate increase model)      |
+
 ### RPC getEvents filter examples
 
 The Soroban RPC `getEvents` method allows off-chain indexers and user interfaces
@@ -1251,6 +1285,7 @@ fn withdraw(id: u64) -> result<i128, error<contract>>
 fn withdraw_amount(id: u64, amount: i128) -> result<i128, error<contract>>
 fn cancel(id: u64) -> result<i128, error<contract>>
 fn cancel_preview(id: u64) -> result<settlement, error<contract>>
+fn topup_stream(id: u64, added_amount: i128) -> result<(), error<contract>>
 fn get_stream(id: u64) -> result<stream, error<contract>>
 fn get_streams(ids: vec<u64>) -> result<vec<option<stream>>, error<contract>>
 fn stream_exists(id: u64) -> bool

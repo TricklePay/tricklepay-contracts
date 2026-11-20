@@ -49,6 +49,12 @@ consumers have a single document to track. See
 this section turns into a tagged release and how a tag relates to a deployed
 contract.
 
+### Added
+
+- **ABI:** Added `topup_stream` entry point allowing the stream sender to deposit additional tokens, increasing `total_amount` while preserving duration and schedule (Option B: increase rate).
+- **ABI:** Emitted `ToppedUp` event (`sender` topic, `stream_id`, `added_amount`, `new_total_amount`, `new_end_time`) on successful stream top-up.
+- **non-ABI:** Accepted `docs/DESIGN_TOPUP.md` with resolved design decisions on top-up semantics and error handling.
+
 ### Changed
 
 - **non-ABI:** Added JavaScript SDK invocation, view query, and event decoding examples to the README.

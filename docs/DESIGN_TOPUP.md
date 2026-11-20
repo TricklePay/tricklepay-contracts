@@ -1,9 +1,9 @@
 # Design: Topping Up an Existing Stream
 
-**Status:** Proposed  
-**Related Issues:** #455  
+**Status:** Accepted  
+**Related Issues:** #455, #635  
 **Author:** Design Team  
-**Date:** 2026-10-20
+**Date:** 2026-10-20 (Accepted 2026-11-20)
 
 ## Summary
 
@@ -347,21 +347,27 @@ Indexers must handle `ToppedUp` events to correctly compute vested amounts:
 
 **Rejected:** This would let the recipient withdraw the original vested balance a second time, which is incorrect. The `withdrawn` field tracks cumulative withdrawals across the stream's lifetime, and top-up does not change the past.
 
-## Deferred Decisions
+## Resolved Decisions
 
-The following must be resolved before implementation:
+The open design questions were resolved as follows:
 
 1. **Which semantic: extend duration or increase rate?**
-   - Recommendation: Increase rate (Option B) is simpler and works for completed streams. Extend duration (Option A) is more intuitive for payroll but harder to implement correctly.
+   - **Decision: Increase rate (Option B).** Topping up increases `total_amount` while preserving the existing timeline bounds (`start_time`, `cliff_time`, `end_time`). This keeps the vesting formula `vested = total_amount * elapsed / duration` exact and linear without complex schedule distortion or discontinuity.
 
 2. **Can pending streams be topped up?**
-   - Recommendation: Yes, with no special handling. The top-up just increases `total_amount` (and possibly `end_time`), and vesting starts normally at `start_time`.
+   - **Decision: Yes.** Pending streams (`now < start_time`) accept top-ups, increasing `total_amount` while the stream remains in `Pending` status until `start_time`.
 
 3. **What error for top-up on a completed stream?**
-   - Recommendation: Reuse `StreamAlreadyCompleted`, or introduce a new variant `CannotTopUpCompletedStream` if more specificity is desired.
+   - **Decision: `StreamError::StreamAlreadyCompleted`.** Top-up on completed streams (`now >= end_time`) is rejected with `StreamError::StreamAlreadyCompleted` to prevent ambiguous retroactive vesting after completion.
 
 4. **Should there be a minimum top-up amount?**
-   - Recommendation: No. The sender is paying the gas, so if they want to top up by 1 token, that's their choice.
+   - **Decision: No.** Any positive amount (`added_amount > 0`) is accepted. Non-positive amounts (`<= 0`) reject with `StreamError::InvalidAmount`.
+
+5. **Can cancelled streams be topped up?**
+   - **Decision: No.** Rejected with `StreamError::AlreadyCancelled`.
+
+6. **Capacity bound:**
+   - **Decision:** If `stream.total_amount + added_amount > MAX_AMOUNT`, rejected with `StreamError::AmountTooLarge`.
 
 ## Future Work
 
@@ -371,6 +377,7 @@ The following must be resolved before implementation:
 ## Changelog
 
 - **2026-10-20:** Initial design proposal.
+- **2026-11-20:** Accepted design with Option B (increase rate / preserve duration) and resolved open questions (#635).
 
 ## References
 
