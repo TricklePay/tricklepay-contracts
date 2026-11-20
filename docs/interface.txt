@@ -19,6 +19,11 @@ pub trait Contract {
         ids: soroban_sdk::Vec<u64>,
     ) -> Result<soroban_sdk::Vec<Option<Stream>>, StreamError>;
     fn stream_count(env: soroban_sdk::Env) -> u64;
+    fn topup_stream(
+        env: soroban_sdk::Env,
+        id: u64,
+        added_amount: i128,
+    ) -> Result<(), StreamError>;
     fn withdrawable(env: soroban_sdk::Env, id: u64) -> Result<i128, StreamError>;
     fn create_stream(
         env: soroban_sdk::Env,
@@ -101,6 +106,16 @@ pub struct Created {
     pub start_time: u64,
     pub end_time: u64,
     pub cliff_time: u64,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["topped_up"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ToppedUp {
+    #[topic]
+    pub sender: soroban_sdk::Address,
+    pub stream_id: u64,
+    pub added_amount: i128,
+    pub new_total_amount: i128,
+    pub new_end_time: u64,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["cancelled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

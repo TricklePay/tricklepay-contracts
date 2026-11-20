@@ -42,6 +42,18 @@ pub struct Cancelled {
     pub sender_refund: i128,
 }
 
+/// Emitted when a stream is topped up by the sender.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToppedUp {
+    #[topic]
+    pub sender: Address,
+    pub stream_id: u64,
+    pub added_amount: i128,
+    pub new_total_amount: i128,
+    pub new_end_time: u64,
+}
+
 /// Publishes [`Created`] for a newly stored stream.
 pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
     Created {
@@ -80,6 +92,25 @@ pub(crate) fn publish_cancelled(
         id,
         recipient_amount,
         sender_refund,
+    }
+    .publish(env);
+}
+
+/// Publishes [`ToppedUp`] after depositing additional tokens into an active stream.
+pub(crate) fn publish_topped_up(
+    env: &Env,
+    sender: &Address,
+    stream_id: u64,
+    added_amount: i128,
+    new_total_amount: i128,
+    new_end_time: u64,
+) {
+    ToppedUp {
+        sender: sender.clone(),
+        stream_id,
+        added_amount,
+        new_total_amount,
+        new_end_time,
     }
     .publish(env);
 }
