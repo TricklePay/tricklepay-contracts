@@ -73,6 +73,7 @@ jobs:
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
+          rustup target add wasm32v1-none
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -82,6 +83,9 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build WASM
+        run: cargo build --locked --release --target wasm32v1-none
 
       - name: Test
         run: cargo test --locked
@@ -97,9 +101,6 @@ jobs:
 
       - name: Test the Markdown link checker
         run: python3 scripts/test_check_markdown_links.py
-
-      - name: Build WASM
-        run: cargo build --locked --release --target wasm32v1-none
 
       - name: Summarize WASM artifact
         if: always()
