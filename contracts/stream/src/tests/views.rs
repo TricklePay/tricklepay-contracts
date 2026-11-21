@@ -160,6 +160,28 @@ fn max_amount_view_returns_i64_max() {
 }
 
 #[test]
+fn remaining_time_uses_ledger_time_and_returns_zero_when_complete_or_cancelled() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let active_id = t.open_default_stream(1_000);
+    let cancelled_id = t.open_default_stream(1_000);
+
+    assert_eq!(t.contract.remaining_time(&active_id), 1_000);
+
+    t.set_time(600);
+    assert_eq!(t.contract.remaining_time(&active_id), 500);
+    t.contract.cancel(&cancelled_id);
+    assert_eq!(t.contract.remaining_time(&cancelled_id), 0);
+
+    t.set_time(1_100);
+    assert_eq!(t.contract.remaining_time(&active_id), 0);
+    assert_eq!(
+        t.contract.try_remaining_time(&999),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
 fn stream_exists_reports_existing_unknown_cancelled_and_completed_streams() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);

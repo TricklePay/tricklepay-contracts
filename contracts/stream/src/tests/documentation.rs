@@ -154,6 +154,7 @@ fn interface_snapshot_lists_every_public_entry_point() {
         ("withdrawable", &["env", "id"]),
         ("vested", &["env", "id"]),
         ("locked", &["env", "id"]),
+        ("remaining_time", &["env", "id"]),
         ("progress", &["env", "id"]),
         ("status", &["env", "id"]),
         ("stream_count", &["env"]),

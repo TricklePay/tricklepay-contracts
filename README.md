@@ -227,6 +227,7 @@ seconds, matching the ledger clock.
 | `vested(id)` | `i128` | Total amount vested at the current ledger time. |
 | `vested_at(id, timestamp)` | `i128` | Project the vested amount at a specified Unix timestamp. |
 | `locked(id)` | `i128` | Amount not yet vested at the current ledger time. |
+| `remaining_time(id)` | `u64` | Seconds until `end_time`, using ledger time; returns `0` when completed or cancelled. |
 | `progress(id)` | `u32` | Vesting progress in basis points, from `0` to `10000`. |
 | `status(id)` | `StreamStatus` | Lifecycle status at the current ledger time. |
 | `stream_count()` | `u64` | Number of streams created so far. |
@@ -282,6 +283,7 @@ Not all view functions extend storage TTL. The contract deliberately distinguish
 | `vested(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Real-time vesting calculation for individual stream. |
 | `vested_at(id, timestamp)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Schedule projection for individual stream. |
 | `locked(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Unvested balance query for individual stream. |
+| `remaining_time(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Remaining duration query using the current ledger timestamp. |
 | `progress(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Progress indicator query for individual stream. |
 | `status(id)` | `storage::get_stream` | **Yes** (if < `BUMP_THRESHOLD`) | Status enum derivation for individual stream. |
 | `cancel_preview(id)` | `storage::get_stream_readonly` | **No** | Off-chain simulation preview; side-effect-free, emits no ledger writes. |
@@ -799,15 +801,24 @@ Vesting uses the **ledger close time** (`env.ledger().timestamp()`) rather than 
 
 ### Deriving the remaining time
 
-To show how much time is left in a stream, a client must compute the remaining duration from the stream's schedule fields. Doing this consistently with the contract's own arithmetic requires using the same reference point: the **ledger close time** (`env.ledger().timestamp()`), not the client's wall clock.
+Use `remaining_time(id)` to read seconds until the stream ends directly from
+the contract. It uses the current ledger timestamp and returns `0` for
+completed or cancelled streams. The value is not calculated from the client's
+wall clock.
+
+If a client needs to derive the value from stream fields instead, use the same
+reference point as the contract: the **ledger close time**
+(`env.ledger().timestamp()`), not the local system clock.
 
 **Formula:**
 
 ```
-remaining_seconds = end_time - now
+remaining_seconds = max(0, end_time - now)
 ```
 
-where `now` is the current ledger timestamp. If `now >= end_time`, the stream is fully vested and `remaining_seconds` is zero (or negative, which should be clamped to zero for display).
+where `now` is the current ledger timestamp. If `now >= end_time`, the stream
+is fully vested and `remaining_seconds` is zero. A cancelled stream also
+reports zero from `remaining_time(id)`, regardless of its original end time.
 
 **Worked example:**
 
