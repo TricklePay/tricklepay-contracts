@@ -525,6 +525,18 @@ impl StreamContract {
         Ok((stream.total_amount - vested).max(0))
     }
 
+    /// Returns seconds until the stream ends, or `StreamNotFound`.
+    ///
+    /// The current time is read from the ledger. Completed and cancelled
+    /// streams return `0`.
+    pub fn remaining_time(env: Env, id: u64) -> Result<u64, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Ok(0);
+        }
+        Ok(stream.end_time.saturating_sub(env.ledger().timestamp()))
+    }
+
     /// Vesting progress in basis points, from 0 (nothing vested) to
     /// [`crate::BPS_SCALE`] (100% vested). Useful for rendering a progress indicator without
     /// (100% vested). Useful for rendering a progress indicator without

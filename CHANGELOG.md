@@ -51,6 +51,7 @@ contract.
 
 ### Added
 
+- **ABI:** Added `remaining_time(id) -> u64`, returning seconds until the stream ends using ledger time and `0` for completed or cancelled streams.
 - **ABI:** Added `withdraw_to(id, destination, amount) -> i128` entry point allowing the stream recipient to withdraw vested tokens directly to a designated address.
 - **ABI:** Extended `Withdrawn` event payload with `destination: Address` recording the address receiving the transferred tokens.
 - **non-ABI:** Accepted `docs/DESIGN_WITHDRAW_TO.md` specifying `withdraw_to` semantics, authorization, and event format.
