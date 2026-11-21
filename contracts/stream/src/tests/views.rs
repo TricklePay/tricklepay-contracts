@@ -153,6 +153,117 @@ fn get_streams_handles_mixture_of_existing_unknown_and_cancelled_ids() {
 }
 
 #[test]
+fn withdrawable_many_returns_balances_for_mixed_stream_states() {
+    let t = StreamTest::setup(5_000);
+    t.set_time(100);
+
+    let active_id = t.open_default_stream(1_000);
+    let cancelled_id = t.open_default_stream(1_000);
+    let completed_id = t.open_default_stream(1_000);
+    let pending_id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &2_000,
+        &3_000,
+        &2_000,
+    );
+
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw_amount(&active_id, &200), 200);
+    t.contract.cancel(&cancelled_id);
+
+    t.set_time(1_100);
+    let batch = vec![
+        &t.env,
+        active_id,
+        cancelled_id,
+        completed_id,
+        pending_id,
+        999,
+    ];
+    let amounts = t.contract.withdrawable_many(&batch);
+    assert_eq!(amounts, vec![&t.env, 800, 500, 1_000, 0, 0]);
+}
+
+#[test]
+fn withdrawable_many_respects_limit_and_is_read_only() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let mut exact_batch = Vec::new(&t.env);
+    for _ in 0..MAX_BATCH_SIZE {
+        exact_batch.push_back(id);
+    }
+
+    t.set_sequence(ENTRY_TTL - BUMP_THRESHOLD + 1);
+    let ttl_before = t.stream_ttl(id);
+    let amounts = t.contract.withdrawable_many(&exact_batch);
+    assert_eq!(amounts.len(), MAX_BATCH_SIZE);
+    assert_eq!(amounts.get(0), Some(0));
+    assert_eq!(t.stream_ttl(id), ttl_before);
+    assert!(t.event_publishers().is_empty());
+
+    let mut oversized = exact_batch;
+    oversized.push_back(id);
+    assert_eq!(
+        t.contract.try_withdrawable_many(&oversized),
+        Err(Ok(StreamError::BatchTooLarge))
+    );
+    assert!(t
+        .contract
+        .withdrawable_many(&Vec::<u64>::new(&t.env))
+        .is_empty());
+}
+
+#[test]
+fn rate_per_second_handles_one_second_and_long_stream_rounding() {
+    let t = StreamTest::setup(2_000_000_003);
+    t.set_time(100);
+
+    let one_second = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &9,
+        &100,
+        &101,
+        &100,
+    );
+    assert_eq!(t.contract.rate_per_second(&one_second), 9);
+
+    let long_stream = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000_000_003,
+        &100,
+        &1_000_100,
+        &100,
+    );
+    assert_eq!(t.contract.rate_per_second(&long_stream), 1_000);
+    t.set_time(1_000_100);
+    assert_eq!(t.contract.vested(&long_stream), 1_000_000_003);
+}
+
+#[test]
+fn rate_per_second_returns_zero_for_cancelled_streams() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    t.contract.cancel(&id);
+    assert_eq!(t.contract.rate_per_second(&id), 0);
+    assert_eq!(
+        t.contract.try_rate_per_second(&999),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
 fn max_amount_view_returns_i64_max() {
     let t = StreamTest::setup(1);
 
