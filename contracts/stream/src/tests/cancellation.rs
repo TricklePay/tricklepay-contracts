@@ -21,7 +21,7 @@ fn cancel_preview_matches_cancel_without_writing_or_publishing() {
     t.set_sequence(ENTRY_TTL - BUMP_THRESHOLD + 1);
     let ttl_before = t.stream_ttl(id);
     let stream_before = t.persistent_stream(&crate::storage::DataKey::Stream(id));
-    let preview = t.contract.cancel_preview(&id);
+    let preview = t.contract.cancel_preview(&id, &600);
 
     assert_eq!(
         preview,
@@ -37,20 +37,20 @@ fn cancel_preview_matches_cancel_without_writing_or_publishing() {
     );
     assert!(t.event_publishers().is_empty());
     assert_eq!(
-        t.contract.try_cancel_preview(&99),
+        t.contract.try_cancel_preview(&99, &600),
         Err(Ok(StreamError::StreamNotFound))
     );
 
     assert_eq!(t.contract.cancel(&id), preview.refund);
     assert_eq!(
-        t.contract.try_cancel_preview(&id),
+        t.contract.try_cancel_preview(&id, &600),
         Err(Ok(StreamError::AlreadyCancelled))
     );
 
     let completed_id = t.open_default_stream(1_000);
     t.set_time(1_100);
     assert_eq!(
-        t.contract.try_cancel_preview(&completed_id),
+        t.contract.try_cancel_preview(&completed_id, &1_100),
         Err(Ok(StreamError::StreamAlreadyCompleted))
     );
 }
@@ -74,8 +74,8 @@ fn cancel_preview_before_start_time_yields_full_refund() {
     // Clock is at 100, which is strictly before start_time (200)
     t.set_time(100);
 
-    // 1. Preview before start
-    let preview = t.contract.cancel_preview(&id);
+    // 1. Preview at timestamp 100 (before start)
+    let preview = t.contract.cancel_preview(&id, &100);
     assert_eq!(
         preview,
         Settlement {
@@ -120,8 +120,8 @@ fn cancel_preview_before_unreached_cliff_yields_full_refund() {
     // Even though 30% of duration elapsed, nothing has vested.
     t.set_time(400);
 
-    // 1. Preview before cliff
-    let preview = t.contract.cancel_preview(&id);
+    // 1. Preview at timestamp 400 (before cliff)
+    let preview = t.contract.cancel_preview(&id, &400);
     assert_eq!(
         preview,
         Settlement {
@@ -146,6 +146,51 @@ fn cancel_preview_before_unreached_cliff_yields_full_refund() {
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
 
+/// New test: cancel_preview at a custom timestamp differs from current ledger time.
+#[test]
+fn cancel_preview_at_custom_timestamp_independent_of_current_time() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // Current ledger time: 150 (early in the stream, so 50/1000 would vest).
+    t.set_time(150);
+    let current_vested = t.contract.vested(&id);
+    assert_eq!(current_vested, 50);
+
+    // But preview what the settlement would be at timestamp 600 (midpoint).
+    let preview_at_600 = t.contract.cancel_preview(&id, &600);
+    assert_eq!(
+        preview_at_600,
+        Settlement {
+            refund: 500,
+            recipient_remaining: 500,
+        }
+    );
+
+    // Also preview at an even later timestamp: 850 (three quarters).
+    let preview_at_850 = t.contract.cancel_preview(&id, &850);
+    assert_eq!(
+        preview_at_850,
+        Settlement {
+            refund: 250,
+            recipient_remaining: 750,
+        }
+    );
+
+    // Current ledger state (time=150) should be unchanged.
+    assert_eq!(t.contract.vested(&id), current_vested);
+    assert!(t.event_publishers().is_empty());
+}
+
 #[test]
 fn cancel_preview_after_partial_withdrawal_deducts_withdrawn_from_recipient_remaining() {
     let t = StreamTest::setup(1_000);
@@ -159,11 +204,11 @@ fn cancel_preview_after_partial_withdrawal_deducts_withdrawn_from_recipient_rema
     assert_eq!(withdrawn, 200);
     assert_eq!(t.token.balance(&t.recipient), 200);
 
-    // 1. Preview at midpoint after 200 has been withdrawn:
+    // 1. Preview at timestamp 600 after 200 has been withdrawn:
     // Total: 1000. Vested: 500. Withdrawn: 200.
     // Unvested refund: 1000 - 500 = 500.
     // Recipient remaining: 500 - 200 = 300.
-    let preview = t.contract.cancel_preview(&id);
+    let preview = t.contract.cancel_preview(&id, &600);
     assert_eq!(
         preview,
         Settlement {
@@ -735,7 +780,7 @@ proptest! {
         if cancel_time >= end {
             // Completed streams: both cancel_preview and cancel return StreamAlreadyCompleted.
             prop_assert_eq!(
-                t.contract.try_cancel_preview(&id),
+                t.contract.try_cancel_preview(&id, &cancel_time),
                 Err(Ok(StreamError::StreamAlreadyCompleted))
             );
             prop_assert_eq!(
@@ -751,8 +796,8 @@ proptest! {
             let contract_bal_before = t.token.balance(&t.contract.address);
             let events_count_before = t.env.events().all().events().len();
 
-            // 2. Call cancel_preview.
-            let preview = t.contract.cancel_preview(&id);
+            // 2. Call cancel_preview with the specified cancel_time.
+            let preview = t.contract.cancel_preview(&id, &cancel_time);
 
             // 3. Assert cancel_preview changes no state: stream record, balances, and events are untouched.
             prop_assert_eq!(t.contract.get_stream(&id), stream_before.clone());
@@ -792,7 +837,7 @@ proptest! {
 
             // 7. Cancelled streams: both cancel_preview and cancel return AlreadyCancelled.
             prop_assert_eq!(
-                t.contract.try_cancel_preview(&id),
+                t.contract.try_cancel_preview(&id, &cancel_time),
                 Err(Ok(StreamError::AlreadyCancelled))
             );
             prop_assert_eq!(

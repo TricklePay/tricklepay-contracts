@@ -487,13 +487,18 @@ impl StreamContract {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
 
-    /// Preview the settlement for cancelling a stream at the current ledger time.
+    /// Preview the settlement for cancelling a stream at a chosen timestamp.
     ///
-    /// Returns the same [`vesting::Settlement`] that [`Self::cancel`] would
-    /// produce now, without requiring authorization, changing storage, or
-    /// publishing events. Returns [`StreamError::StreamNotFound`] for an
-    /// unknown id, [`StreamError::AlreadyCancelled`] for a cancelled stream,
-    /// and [`StreamError::StreamAlreadyCompleted`] when the stream has ended.
+    /// Returns the [`vesting::Settlement`] that [`Self::cancel`] would produce
+    /// at the specified `timestamp`, without requiring authorization, changing
+    /// storage, or publishing events. This allows senders to explore
+    /// cancellation outcomes across the stream's active window before committing
+    /// to a cancellation transaction.
+    ///
+    /// Returns [`StreamError::StreamNotFound`] for an unknown id,
+    /// [`StreamError::AlreadyCancelled`] for a cancelled stream, and
+    /// [`StreamError::StreamAlreadyCompleted`] when the timestamp is at or
+    /// after the stream's end time.
     ///
     /// # Examples
     ///
@@ -504,20 +509,20 @@ impl StreamContract {
     /// # let contract_id = env.register(StreamContract, ());
     /// # let client = StreamContractClient::new(&env, &contract_id);
     /// # let stream_id = 0u64;
-    /// let settlement = client.cancel_preview(&stream_id);
+    /// # let timestamp = 1_000_000u64;
+    /// let settlement = client.cancel_preview(&stream_id, &timestamp);
     /// ```
-    pub fn cancel_preview(env: Env, id: u64) -> Result<vesting::Settlement, StreamError> {
+    pub fn cancel_preview(env: Env, id: u64, timestamp: u64) -> Result<vesting::Settlement, StreamError> {
         let stream = storage::get_stream_readonly(&env, id).ok_or(StreamError::StreamNotFound)?;
         if stream.cancelled {
             return Err(StreamError::AlreadyCancelled);
         }
 
-        let now = env.ledger().timestamp();
-        if now >= stream.end_time {
+        if timestamp >= stream.end_time {
             return Err(StreamError::StreamAlreadyCompleted);
         }
 
-        let vested = stream.vested_amount(now);
+        let vested = stream.vested_amount(timestamp);
         Ok(vesting::settlement(
             stream.total_amount,
             vested,
