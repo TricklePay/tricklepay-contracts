@@ -1,4 +1,4 @@
-#![cfg(test)]
+﻿#![cfg(test)]
 
 use crate::StreamError;
 use std::string::{String, ToString};
@@ -70,9 +70,6 @@ fn stream_error_all_matches_exhaustive_match() {
         );
     }
 
-    // Exhaustive match: if a variant is added to StreamError, this match
-    // will fail to compile unless updated, ensuring StreamError::ALL is
-    // kept complete.
     let check_exhaustive = |err: StreamError| match err {
         StreamError::StreamNotFound => check_in_all(err),
         StreamError::InvalidTimeRange => check_in_all(err),
@@ -100,6 +97,96 @@ fn stream_error_all_matches_exhaustive_match() {
 }
 
 const INTERFACE_SNAPSHOT: &str = include_str!("../../../../docs/interface.txt");
+const CONTRACT_SOURCE: &str = include_str!("../contract.rs");
+
+#[test]
+fn readme_view_table_matches_contract_read_only_functions() {
+    let contract_lines: std::vec::Vec<&str> = CONTRACT_SOURCE.lines().collect();
+    
+    let views_section_start = contract_lines
+        .iter()
+        .position(|line| line.contains("// Views"))
+        .expect("contract.rs must have a Views section marker");
+    
+    let readonly_functions: std::collections::BTreeSet<String> = contract_lines
+        .iter()
+        .skip(views_section_start)
+        .filter(|line| line.trim().starts_with("pub fn "))
+        .filter_map(|line| {
+            let after_pub_fn = line.trim().strip_prefix("pub fn ")?;
+            let fn_name = after_pub_fn.split('(').next()?.trim();
+            Some(fn_name.to_string())
+        })
+        .collect();
+    
+    let mutating_functions: std::collections::BTreeSet<&str> = [
+        "create_stream",
+        "withdraw",
+        "withdraw_many",
+        "withdraw_amount",
+        "withdraw_to",
+        "topup_stream",
+        "cancel",
+    ]
+    .iter()
+    .copied()
+    .collect();
+    
+    let view_table_heading = README
+        .lines()
+        .position(|line| line.trim() == "### Read-only view functions")
+        .expect("README must contain '### Read-only view functions' section");
+    
+    let readme_view_functions: std::collections::BTreeSet<String> = README
+        .lines()
+        .skip(view_table_heading)
+        .skip_while(|line| !line.starts_with("| View"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let columns: std::vec::Vec<_> = line.split('|').map(str::trim).collect();
+            if columns.len() >= 2 {
+                let view_cell = columns[1];
+                let fn_name = view_cell
+                    .trim_matches('`')
+                    .split('(')
+                    .next()?
+                    .trim();
+                if !fn_name.is_empty() {
+                    return Some(fn_name.to_string());
+                }
+            }
+            None
+        })
+        .collect();
+    
+    let mut missing_in_readme = std::vec::Vec::new();
+    for fn_name in &readonly_functions {
+        if !mutating_functions.contains(fn_name.as_str()) 
+            && !readme_view_functions.contains(fn_name) {
+            missing_in_readme.push(fn_name.clone());
+        }
+    }
+    
+    let mut extra_in_readme = std::vec::Vec::new();
+    for fn_name in &readme_view_functions {
+        if !readonly_functions.contains(fn_name) {
+            extra_in_readme.push(fn_name.clone());
+        }
+    }
+    
+    assert!(
+        missing_in_readme.is_empty(),
+        "README view table is missing the following read-only functions: {}",
+        missing_in_readme.join(", ")
+    );
+    
+    assert!(
+        extra_in_readme.is_empty(),
+        "README view table contains functions that don't exist in contract: {}",
+        extra_in_readme.join(", ")
+    );
+}
 
 #[test]
 fn interface_snapshot_lists_every_public_entry_point() {
@@ -190,7 +277,6 @@ fn readme_resource_table_lists_required_entry_points() {
         .skip(resource_heading)
         .collect::<std::vec::Vec<_>>();
 
-    // Verify SDK version statement
     assert!(
         readme_section
             .iter()
@@ -199,11 +285,10 @@ fn readme_resource_table_lists_required_entry_points() {
         "README resource cost section must document the SDK version (25.3.2)"
     );
 
-    // Parse the table
     let table_rows: std::vec::Vec<String> = readme_section
         .iter()
         .skip_while(|line| !line.starts_with("| Entry point"))
-        .skip(2) // header + separator
+        .skip(2)
         .take_while(|line| line.starts_with('|'))
         .map(|line| {
             let cols: std::vec::Vec<_> = line.split('|').map(str::trim).collect();
