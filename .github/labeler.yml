@@ -1,0 +1,28 @@
+# Automatic PR labeling based on changed paths.
+#
+# This config maps file patterns to labels. The labeler runs on pull_request
+# events and applies labels when any file in the PR matches a pattern.
+#
+# The labeler NEVER checks out pull request code. It operates only on the list
+# of changed paths provided by GitHub's pull request metadata.
+#
+# Patterns are minimatch globs. Multiple patterns can be grouped under a
+# single label; any match applies the label.
+
+contracts:
+  - changed-files:
+      - any-glob-to-any-file: 'contracts/**'
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file: 'scripts/**'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**'
+      - any-glob-to-any-file: '*.md'
+      - any-glob-to-any-file: 'CHANGELOG.md'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'

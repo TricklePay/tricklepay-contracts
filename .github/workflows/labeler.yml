@@ -1,0 +1,27 @@
+name: Label pull requests
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: Apply labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Convention: pin actions to full commit SHAs so CI only runs reviewed
+      # action code; refresh these pins intentionally when updating actions.
+      - uses: actions/labeler@8558fd74291d67161a8a78ce36a881fa63b766a9 # v5.0.0
+        with:
+          # The labeler action reads PR metadata from the GitHub API; it does
+          # NOT check out the pull request code. This ensures untrusted code
+          # from external contributors never runs in a workflow with write
+          # permissions.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
