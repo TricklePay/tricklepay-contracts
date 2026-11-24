@@ -1575,3 +1575,42 @@ fn withdraw_to_then_cancel_preserves_accounting() {
     assert_eq!(t.contract.withdrawable(&id), 0);
     assert_eq!(t.token.balance(&t.contract.address), 0);
 }
+
+#[test]
+fn withdraw_to_on_cancelled_stream_pays_up_to_frozen_vested_balance() {
+    use soroban_sdk::Event;
+
+    use crate::events::Withdrawn;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // Cancel at midpoint so vested balance freezes at 500.
+    t.set_time(600);
+    assert_eq!(t.contract.cancel(&id), 500);
+
+    // Advancing past the original end time does not unfreeze the vested cap.
+    t.set_time(1_200);
+    let destination = Address::generate(&t.env);
+
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &501),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+
+    assert_eq!(t.contract.withdraw_to(&id, &destination, &500), 500);
+    t.assert_latest_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount: 500,
+            destination: destination.clone(),
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+    assert_eq!(t.token.balance(&destination), 500);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+}
