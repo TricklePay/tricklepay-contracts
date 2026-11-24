@@ -904,7 +904,7 @@ When a stream is created, the **entire `total_amount` is transferred from the se
 
 1. **Trustless guarantee for the recipient:** The recipient is guaranteed that the tokens exist and are locked in the contract for the duration of the stream. There is no risk that the sender will fail to pay, run out of funds, or renege on the agreement. The vested amount is always claimable, regardless of what the sender does afterward.
 
-2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding, top-ups, or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created, so the vesting logic is purely time-based arithmetic with no external dependencies.
+2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created—and any top-up deposits the added amount in full before `total_amount` changes—so the vesting logic is purely time-based arithmetic with no external dependencies.
 
 3. **Enables cancellation refunds:** The sender can cancel a stream and immediately receive the unvested remainder back. This is only possible because the full amount is already in the contract — there is no need to track or enforce future payments.
 
