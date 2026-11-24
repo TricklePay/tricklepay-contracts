@@ -635,3 +635,23 @@ fn ids_never_restart_after_a_long_idle_gap() {
     assert!(t.persistent_has(&DataKey::Stream(1)));
     assert_eq!(t.contract.get_stream(&first).total_amount, 1_000);
 }
+
+/// Topping up a stream restores both the stream entry TTL and the instance TTL.
+#[test]
+fn topup_restores_decayed_stream_and_instance_ttls() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL - elapsed);
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+
+    t.set_time(600);
+    t.contract.topup_stream(&id, &500);
+
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+    assert_eq!(t.instance_ttl(), ENTRY_TTL);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 1_500);
+}
