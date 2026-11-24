@@ -129,6 +129,30 @@ fn topup_rejected_with_stream_already_completed_when_past_end_time() {
 }
 
 #[test]
+fn topup_succeeds_one_second_before_end_time_and_fails_at_end_time() {
+    let t = StreamTest::setup(5_000);
+    t.set_time(100);
+    // Stream over [100, 1_100] (duration = 1_000) with initial total = 1_000.
+    let id = t.open_default_stream(1_000);
+
+    // One second before end_time (1_099 = end_time - 1), top-up is still accepted.
+    t.set_time(1_099);
+    t.contract.topup_stream(&id, &1_000);
+    assert_eq!(t.contract.get_stream(&id).total_amount, 2_000);
+
+    // At t = 1_099, elapsed = 999 -> vested = 2_000 * 999 / 1_000 = 1_998.
+    assert_eq!(t.contract.vested(&id), 1_998);
+
+    // At end_time (1_100), top-up is rejected with StreamAlreadyCompleted.
+    t.set_time(1_100);
+    assert_eq!(
+        t.contract.try_topup_stream(&id, &500),
+        Err(Ok(StreamError::StreamAlreadyCompleted))
+    );
+    assert_eq!(t.contract.get_stream(&id).total_amount, 2_000);
+}
+
+#[test]
 fn topup_rejected_with_amount_too_large_when_exceeding_max_amount() {
     let t = StreamTest::setup(MAX_AMOUNT);
     t.set_time(100);
