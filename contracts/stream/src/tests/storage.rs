@@ -284,6 +284,69 @@ fn withdrawing_restores_a_decayed_stream_ttl() {
     assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
 }
 
+/// Withdrawing to a destination restores a decayed stream entry TTL.
+#[test]
+fn withdraw_to_restores_a_decayed_stream_ttl() {
+    use soroban_sdk::testutils::Address as _;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    assert!(t.stream_ttl(id) < BUMP_THRESHOLD);
+
+    let destination = soroban_sdk::Address::generate(&t.env);
+    t.set_time(600);
+    assert_eq!(t.contract.withdraw_to(&id, &destination, &300), 300);
+
+    assert_eq!(t.stream_ttl(id), ENTRY_TTL);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 300);
+}
+
+/// Batch withdrawal restores every paid stream's decayed TTL while leaving
+/// unvested skipped streams untouched.
+#[test]
+fn withdraw_many_restores_paid_streams_and_leaves_skipped_untouched() {
+    let t = StreamTest::setup(3_000);
+    t.set_time(100);
+    let paid_a = t.open_default_stream(1_000);
+    let paid_b = t.open_default_stream(1_000);
+
+    let decay_step = ENTRY_TTL - BUMP_THRESHOLD - 100;
+    t.set_sequence(decay_step);
+
+    // Open a third stream whose schedule has not started yet at t = 600,
+    // keeping its remaining TTL above BUMP_THRESHOLD when the batch runs.
+    let skipped = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &2_000,
+        &3_000,
+        &2_000,
+    );
+
+    t.set_sequence(decay_step + 101);
+    assert!(t.stream_ttl(paid_a) < BUMP_THRESHOLD);
+    assert!(t.stream_ttl(paid_b) < BUMP_THRESHOLD);
+    let skipped_ttl_before = t.stream_ttl(skipped);
+    assert_eq!(skipped_ttl_before, ENTRY_TTL - 101);
+    assert!(skipped_ttl_before > BUMP_THRESHOLD);
+
+    t.set_time(600);
+    let amounts = t
+        .contract
+        .withdraw_many(&soroban_sdk::vec![&t.env, paid_a, skipped, paid_b]);
+    assert_eq!(amounts, soroban_sdk::vec![&t.env, 500, 0, 500]);
+
+    assert_eq!(t.stream_ttl(paid_a), ENTRY_TTL);
+    assert_eq!(t.stream_ttl(paid_b), ENTRY_TTL);
+    assert_eq!(t.stream_ttl(skipped), skipped_ttl_before);
+}
+
 /// Cancelling restores a decayed stream entry TTL.
 #[test]
 fn cancelling_restores_a_decayed_stream_ttl() {
