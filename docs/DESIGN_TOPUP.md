@@ -1,6 +1,6 @@
 # Design: Topping Up an Existing Stream
 
-**Status:** Accepted  
+**Status:** Accepted — implemented in [`topup_stream`](../contracts/stream/src/contract.rs#L344) with tests in [`topup.rs`](../contracts/stream/src/tests/topup.rs)  
 **Related Issues:** #455, #635  
 **Author:** Design Team  
 **Date:** 2026-10-20 (Accepted 2026-11-20)
@@ -67,12 +67,16 @@ Add tokens without changing `end_time`, increasing the vesting rate.
 - Changes the vesting rate mid-stream, which may not match the sender's intent ("I want to extend, not accelerate")
 - For a stream far from completion, the rate change may be imperceptible to the recipient
 
-#### Recommendation: Neither Option Is Universally Correct
+#### Recommendation: Option B — Increase Rate (Preserve Duration)
 
-**The design decision is to defer this feature until a concrete use case clarifies which semantic is required.** Implementing the wrong one would be worse than not implementing it at all. A future implementation should:
+**The shipped design implements Option B in [`topup_stream`](../contracts/stream/src/contract.rs#L344): topping up increases `total_amount` while keeping `end_time` (and `start_time` / `cliff_time`) unchanged.**
 
-1. Support both options (extend duration vs. increase rate) as separate entry points or a parameter.
-2. Or, support only one option and document the other as out of scope.
+**Why Option B shipped:**
+- **Linear vesting formula stays intact:** Keeping `start_time`, `cliff_time`, and `end_time` fixed preserves `vested_amount = total_amount * elapsed / duration` without piecewise rate segments or cliff discontinuities.
+- **Minimal state and interface surface:** Only `total_amount` changes, avoiding timeline manipulation and keeping a single unambiguous `topup_stream(id, added_amount)` entry point.
+- **Clean lifecycle boundaries:** Paired with rejecting cancelled (`AlreadyCancelled`) and completed (`StreamAlreadyCompleted`, `now >= end_time`) streams, senders cannot retroactively alter finished streams.
+
+**Option A (Extend Duration / Preserve Rate)** remains documented above and under [Alternatives Considered](#alternatives-considered) as the rejected alternative for `topup_stream`; supporting duration extension would require a separate entry point or explicit mode in the future.
 
 ### 2. Interaction with Vesting Formula
 
@@ -159,9 +163,8 @@ A new entry point is required:
 /// Top up an existing stream by adding tokens.
 ///
 /// Only the sender may call this. The added amount is transferred from the
-/// sender into the contract, increasing the stream's total. The vesting
-/// schedule is adjusted according to [the chosen semantic: extend duration
-/// or increase rate].
+/// sender into the contract, increasing the stream's total while keeping
+/// `end_time` unchanged (Option B: increase rate, preserve duration).
 ///
 /// Returns `Ok(())` on success.
 ///
@@ -331,13 +334,11 @@ Indexers must handle `ToppedUp` events to correctly compute vested amounts:
 
 ### Alt 1: No Top-Up Feature
 
-**Rejected for now, but this is the safe default.** Without a clear use case and semantic, deferring this feature is acceptable. The sender can always create a new stream if they want to add more tokens.
+**Rejected:** `topup_stream` was shipped (using Option B) so senders can add funds to an existing pending or active stream without cancelling and breaking stream continuity.
 
 ### Alt 2: Support Both "Extend Duration" and "Increase Rate"
 
-**Feasible, but adds complexity.** Two entry points (`topup_by_extending` and `topup_by_rate_increase`) or a parameter (`topup_stream(id, amount, mode)`) would allow the sender to choose. This is the most flexible design, but it doubles the test surface and the indexer logic.
-
-**Recommendation:** Start with one semantic (likely "increase rate" since it is simpler), document the other as out of scope, and revisit if demand arises.
+**Rejected for initial release:** Two entry points (`topup_by_extending` and `topup_by_rate_increase`) or a parameter (`topup_stream(id, amount, mode)`) would allow the sender to choose, but doubles the test surface and indexer logic. Option B ("increase rate") shipped as the sole semantic in `topup_stream`, leaving Option A ("extend duration") documented as an out-of-scope alternative that could be added later as a separate entry point if demand arises.
 
 ### Alt 3: Allow Top-Up on Completed Streams
 
