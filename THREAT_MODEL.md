@@ -71,8 +71,11 @@ state and move no tokens, so anyone can call them for any stream id.
 | Entry point       | Kind      | Who may call it                | Enforced by                                                                                  |
 | ------------------ | --------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
 | `create_stream`    | Mutating  | The `sender` named in the call  | `sender.require_auth()` (`contract.rs`, `create_stream`)                                      |
+| `topup_stream`     | Mutating  | The stream's `sender`           | `stream.sender.require_auth()` (`contract.rs`, `topup_stream`)                                |
 | `withdraw`         | Mutating  | The stream's `recipient`        | `stream.recipient.require_auth()` (`contract.rs`, `withdraw_with`, shared by `withdraw` and `withdraw_amount`) |
 | `withdraw_amount`  | Mutating  | The stream's `recipient`        | `stream.recipient.require_auth()` (`contract.rs`, `withdraw_with`)                             |
+| `withdraw_to`      | Mutating  | The stream's `recipient` (not `destination`) | `stream.recipient.require_auth()` (`contract.rs`, `withdraw_to`)                  |
+| `withdraw_many`    | Mutating  | Each distinct `recipient` in `ids` | `stream.recipient.require_auth()` once per unique recipient (`contract.rs`, `withdraw_many`) |
 | `cancel`           | Mutating  | The stream's `sender`           | `stream.sender.require_auth()` (`contract.rs`, `cancel`)                                      |
 | `get_stream`       | View      | Anyone — no authorization       | none                                                                                           |
 | `withdrawable`     | View      | Anyone — no authorization       | none                                                                                           |
@@ -172,6 +175,54 @@ The contract provides read-only views for inspecting multiple streams in a singl
      If the transaction is submitted during an active vesting window, the executed settlement will differ from the preview. Clients and user interfaces must treat the preview as an instantaneous estimate, not an immutable quote or guaranteed settlement.
   2. **No escrow lock or reservation:** Calling `cancel_preview` does not acquire a lock or reserve funds in the contract. A recipient can execute `withdraw` or `withdraw_amount` in the interval between preview and cancellation submission, reducing `recipient_remaining`.
   3. **No authority grant:** `cancel_preview` is permissionless and can be invoked by anyone. Calling it does not mean the caller possesses the sender's signing keys to execute `cancel`.
+
+## Top-up, third-party withdrawal, and batch withdrawal
+
+Beyond single-stream creation, withdrawal, and cancellation, the contract exposes three mutating entry points that introduce additional asset flows: post-creation deposits (`topup_stream`), third-party payout routing (`withdraw_to`), and multi-stream batch payouts (`withdraw_many`).
+
+### Stream top-up (`topup_stream`)
+
+`topup_stream(id: u64, added_amount: i128) -> Result<(), StreamError>` lets the stream's `sender` deposit additional tokens into an active or pending stream without changing `end_time`, increasing the effective vesting rate over the stream's remaining window.
+
+- **Assets at risk:** The newly deposited `added_amount` of `stream.token` transferred from `stream.sender` into contract escrow, as well as the resulting increase in `stream.total_amount` (which affects both future vested amounts and any subsequent `cancel` refund).
+- **Trust assumptions:**
+  - Only `stream.sender` can add funds (`stream.sender.require_auth()`).
+  - The stream's `token` behaves as a conforming SEP-41 token: `TokenClient::transfer` moves the exact `added_amount` from `sender` to the contract without deducting an undisclosed fee.
+  - Like `create_stream`, `topup_stream` does **not** verify the deposit by reading `token.balance(&contract_address)` before and after the transfer. If `stream.token` is a fee-on-transfer token, `stream.total_amount` is incremented by the full `added_amount` while the contract's actual token balance increases by less than `added_amount`, creating an escrow shortfall that surfaces as a failed withdrawal or cancellation later in the stream's life.
+- **Abuse cases and mitigations:**
+  - **Unauthorized top-up or griefing:** Enforced by `stream.sender.require_auth()` after confirming the stream exists, preventing third parties or the recipient from altering stream state ([`topup_requires_sender_authorization`](contracts/stream/src/tests/topup.rs)).
+  - **Zero, negative, or overflow amounts:** `added_amount <= 0` is rejected with `StreamError::InvalidAmount`, and `checked_add` plus `new_total > MAX_AMOUNT` reject overflow or ceiling breaches with `StreamError::AmountTooLarge` ([`topup_rejected_with_invalid_amount_when_zero_or_negative`](contracts/stream/src/tests/topup.rs), [`topup_rejected_with_amount_too_large_when_exceeding_max_amount`](contracts/stream/src/tests/topup.rs)).
+  - **Top-up after cancellation or completion:** Rejected with `StreamError::AlreadyCancelled` or `StreamError::StreamAlreadyCompleted` (`now >= stream.end_time`), preventing funds from being locked into a terminal stream ([`topup_rejected_with_already_cancelled_when_stream_cancelled`](contracts/stream/src/tests/topup.rs), [`topup_rejected_with_stream_already_completed_when_past_end_time`](contracts/stream/src/tests/topup.rs)).
+  - **Retroactive vesting jump:** Because `topup_stream` increases `total_amount` while keeping `start_time` and `end_time` fixed, `vested_amount(now)` immediately reflects the higher total for elapsed time, and `cancel` refunds the unvested portion of the combined total ([`topup_increases_vested_amount_midstream`](contracts/stream/src/tests/topup.rs), [`topup_then_cancel_refunds_unvested_including_topup`](contracts/stream/src/tests/topup.rs)).
+
+### Third-party withdrawal (`withdraw_to`)
+
+`withdraw_to(id: u64, destination: Address, amount: i128) -> Result<i128, StreamError>` lets the stream's `recipient` route vested tokens directly to an arbitrary `destination` address instead of `stream.recipient`.
+
+- **Assets at risk:** Up to the stream's vested, unwithdrawn balance (`withdrawable_amount`), transferred from contract escrow to `destination`.
+- **Trust assumptions:**
+  - Only `stream.recipient` authorizes the call (`stream.recipient.require_auth()`). `destination` does **not** authorize the transfer.
+  - `destination` may be an externally owned account or a smart contract. If `destination` is a contract, the stream contract assumes `stream.token.transfer(&contract, &destination, &amount)` either succeeds atomically or fails/traps atomically.
+- **Abuse cases and mitigations:**
+  - **Self-transfer to the stream contract:** Sending tokens to `env.current_contract_address()` would increment `stream.withdrawn` without moving tokens out of escrow, stranding funds in the contract. `withdraw_to` explicitly rejects `destination == env.current_contract_address()` with `StreamError::InvalidParticipant` ([`withdraw_to_contract_as_destination_fails`](contracts/stream/src/tests/withdrawal.rs)).
+  - **Unauthorized redirection by `destination` or third parties:** Only `stream.recipient.require_auth()` is accepted; neither the sender nor `destination` can redirect payouts ([`withdraw_to_requires_recipient_authorization`](contracts/stream/src/tests/withdrawal.rs)).
+  - **Destination is a contract (rejection, missing trustline, or reentrancy):** If `destination` is a contract that cannot receive the token (e.g., missing trustline or frozen/unsupported account) or traps during transfer, the token transfer fails and Soroban rolls back the entire transaction so `stream.withdrawn` is not incremented. If a malicious token or contract hook attempts to re-enter the stream contract during `transfer`, the Soroban host rejects the re-entry with `InvalidAction` and rolls back the transaction ([`token_reentrancy_during_withdraw_is_rejected`](contracts/stream/src/tests/reentrancy.rs)).
+  - **Unsolicited delivery to a third-party address:** Because `destination` does not authorize the call, a recipient can send tokens to any non-contract address without its consent, matching standard `token.transfer` semantics.
+  - **Zero, negative, or excess amounts:** Rejected with `StreamError::InvalidAmount` or `StreamError::InsufficientBalance` ([`withdraw_to_zero_or_negative_amount_fails`](contracts/stream/src/tests/withdrawal.rs), [`withdraw_to_exceeding_balance_fails`](contracts/stream/src/tests/withdrawal.rs)).
+
+### Batch withdrawal (`withdraw_many`)
+
+`withdraw_many(ids: Vec<u64>) -> Result<Vec<i128>, StreamError>` withdraws the full withdrawable balance from up to `MAX_BATCH_SIZE` (20) streams in a single transaction, deduplicating authorization per unique `recipient`.
+
+- **Assets at risk:** The combined vested, unwithdrawn balances of all streams named in `ids`.
+- **Trust assumptions:**
+  - Each distinct `stream.recipient` across `ids` authorizes the transaction once (`authorized_recipients` deduplication). A single `require_auth()` covers all streams belonging to that recipient in the batch.
+  - All transfers execute atomically within one Soroban invocation: if any stream ID is missing, any recipient authorization fails, any token transfer fails, or no stream has a positive withdrawable balance, the entire batch rolls back.
+- **Abuse cases and mitigations:**
+  - **Unbounded batch size / resource exhaustion:** `ids.len() > MAX_BATCH_SIZE` (20) is rejected immediately with `StreamError::BatchTooLarge` before reading storage ([`withdraw_many_respects_the_batch_limit`](contracts/stream/src/tests/withdrawal.rs)).
+  - **Duplicate stream IDs (double-withdrawal attempt):** Each ID is processed sequentially, updating `stream.withdrawn += amount` and persisting `storage::set_stream` before moving to the next ID. A repeated ID in the same `ids` vector sees `withdrawable_amount == 0` and transfers nothing ([`withdraw_many_pays_streams_in_order_with_one_transfer_per_stream`](contracts/stream/src/tests/withdrawal.rs)).
+  - **Unknown IDs or empty/zero-payout batches:** Any missing stream ID fails the whole call with `StreamError::StreamNotFound`, and a batch where every stream has `0` withdrawable balance fails with `StreamError::NothingToWithdraw` ([`withdraw_many_rejects_unknown_ids_atomically_and_requires_a_payout`](contracts/stream/src/tests/withdrawal.rs)).
+  - **Cross-recipient unauthorized drain:** Every stream's `recipient` is checked against `authorized_recipients` and required to authorize if not already seen, so a caller cannot bundle another recipient's stream without their signature.
 
 ## Invariants
 

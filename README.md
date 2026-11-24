@@ -103,6 +103,11 @@ A stream is defined by a total amount and a window of time:
   instead and transfers exactly that, up to the same balance; whatever is left
   stays in the stream and keeps growing as more vests. The two can be mixed
   freely — draw a fixed sum each month, then sweep the remainder at the end.
+  `withdraw_to(id, destination, amount)` works like `withdraw_amount` but sends
+  the tokens directly to `destination` instead of the stream's `recipient`;
+  only the `recipient` authorizes the call, and `destination` may be any
+  address except the stream contract itself (which is rejected with
+  `InvalidParticipant`).
   `withdraw_many(ids)` pays multiple streams in one call, including streams
   with different recipients (each distinct recipient authorizes once). Each
   stream with a positive balance is transferred and emits its own event;
@@ -159,6 +164,36 @@ sequenceDiagram
     deactivate TokenContract
     StreamContract->>StreamContract: persist updated withdrawn amount
     StreamContract-->>Recipient: emit Withdrawn(recipient, id, amount)
+    StreamContract-->>Recipient: return amount transferred (i128)
+    deactivate StreamContract
+```
+
+#### Third-party withdrawal (`withdraw_to`)
+
+`withdraw_to(id, destination, amount)` lets the stream's `recipient` route vested tokens directly to any `destination` address (such as a cold wallet, vendor, or smart contract) in a single call:
+
+- **Authorization:** Only the stream's `recipient` authorizes the call; `destination` does not need to sign or approve the transfer.
+- **Destination rule:** `destination` cannot be the stream contract's own address (rejected with `InvalidParticipant`). Passing `destination == recipient` is permitted and behaves identically to `withdraw_amount`.
+- **Errors:** Returns `StreamNotFound` if `id` does not exist, `InvalidAmount` if `amount <= 0`, `InvalidParticipant` if `destination` is the contract's own address, and `InsufficientBalance` if `amount` exceeds the current withdrawable balance.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Recipient
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Destination
+
+    Recipient->>StreamContract: withdraw_to(id, destination, amount)
+    activate StreamContract
+    StreamContract->>StreamContract: require recipient auth; validate amount > 0 & destination != contract
+    StreamContract->>StreamContract: check amount <= withdrawable balance & update withdrawn
+    StreamContract->>TokenContract: transfer(from: stream_contract, to: destination, amount)
+    activate TokenContract
+    TokenContract-->>Destination: credit amount
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract-->>Recipient: emit Withdrawn(recipient, id, amount, destination)
     StreamContract-->>Recipient: return amount transferred (i128)
     deactivate StreamContract
 ```
