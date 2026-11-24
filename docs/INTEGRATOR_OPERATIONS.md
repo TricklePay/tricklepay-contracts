@@ -123,10 +123,12 @@ event by blindly incrementing or appending.
   transaction, operation, and event index, or whatever equivalent the RPC
   exposes) and skip anything already recorded under that key before applying
   it.
-- This matters most for `Withdrawn` and `Cancelled`: re-applying a `Withdrawn`
-  event a second time would double the recorded cumulative withdrawn amount
-  for a stream that never actually withdrew twice, and that figure would then
-  silently disagree with `get_stream`/`withdrawable` on-chain.
+- This matters most for `Withdrawn`, `ToppedUp`, and `Cancelled`: re-applying
+  a `Withdrawn` event a second time would double the recorded cumulative
+  withdrawn amount for a stream that never actually withdrew twice, and
+  re-applying `ToppedUp.added_amount` would similarly overstate `total_amount`;
+  that figure would then silently disagree with `get_stream`/`withdrawable`
+  on-chain.
 - `Created` happens to be idempotent to reapply, since it replaces a record
   with the same data — but dedupe it the same way regardless. Relying on
   per-event-type idempotence instead of one uniform rule is itself a source
@@ -140,10 +142,10 @@ retention window for historical events has already passed. The contract has
 no push mechanism to flag a missed event, so the indexer has to notice on its
 own.
 
-- Treat a `Withdrawn` or `Cancelled` event that names a stream id with no
-  corresponding local `Created` record as a signal that the indexer's own
-  history has a gap for that id — not as a contract inconsistency — and call
-  `get_stream(id)` to recover that stream's fields directly from the
+- Treat a `Withdrawn`, `ToppedUp`, or `Cancelled` event that names a stream id
+  with no corresponding local `Created` record as a signal that the indexer's
+  own history has a gap for that id — not as a contract inconsistency — and
+  call `get_stream(id)` to recover that stream's fields directly from the
   contract rather than trying to reconstruct history that was never observed.
 - Periodically compare the highest stream id the indexer has recorded against
   `stream_count()`. Any gap means ids exist on-chain with no local `Created`
@@ -161,16 +163,16 @@ own.
 ### Ignore, don't crash on, events it does not recognise
 
 Within one deployment the event set is fixed — `Created`, `Withdrawn`,
-`Cancelled`, with the fields documented in
+`Cancelled`, and `ToppedUp`, with the fields documented in
 [README.md § Events](../README.md#events) — but an indexer built to be
 forward-compatible, or one scanning more broadly than a single contract id,
 will still encounter things it was not written to decode:
 
 - Events published by other contracts in the same ledger or transaction —
   most commonly the streamed token's own `transfer` event, since
-  `create_stream`, `withdraw`, `withdraw_amount`, and `cancel` each trigger
-  one. Filter by contract address before attempting to decode anything as a
-  stream event.
+  `create_stream`, `topup_stream`, `withdraw`, `withdraw_amount`,
+  `withdraw_to`, `withdraw_many`, and `cancel` each trigger one or more. Filter
+  by contract address before attempting to decode anything as a stream event.
 - A future redeployment's event shape, since changing field order, a field's
   type, or the topic set is a breaking interface change delivered as a new
   contract address rather than an in-place change (see Interface Stability
@@ -189,11 +191,13 @@ will still encounter things it was not written to decode:
 Not everything belongs in the indexer's own storage as a cached number. Split
 what is stored from what is computed at read time:
 
-- **Store** — facts an event sets once or appends to: `sender`, `recipient`,
-  `token`, `total_amount`, `start_time`, `end_time`, and `cliff_time` (from
-  `Created`); the running total of `amount` across every `Withdrawn` event for
-  a given stream id; and, once seen, a `Cancelled` event's
-  `recipient_amount`/`sender_refund`.
+- **Store** — facts an event sets, updates, or appends to: `sender`,
+  `recipient`, `token`, `total_amount`, `start_time`, `end_time`, and
+  `cliff_time` (from `Created`); updates to `total_amount` from `ToppedUp`
+  (`new_total_amount`, since a top-up does **not** emit a new `Created` event);
+  the running total of `amount` across every `Withdrawn` event for a given
+  stream id (plus `destination` if displaying payout history); and, once seen, a
+  `Cancelled` event's `recipient_amount`/`sender_refund`.
 - **Derive at read time, and never cache as of some past moment:** `vested`,
   `withdrawable`, `locked`, `progress`, and `status`. Each is a pure function
   of the stored facts above and the current ledger time — the same formula
@@ -326,6 +330,34 @@ The formulas match the contract's on-chain arithmetic exactly:
   - Otherwise, status is $\text{Streaming}$.
 
 Recomputing these values client-side costs virtually nothing, allows smooth real-time progress animations, and keeps the dashboard resilient against network latency.
+
+## Top-Up, Destination Withdrawal, and Batch Withdrawal Guidance
+
+### Keeping `total_amount` Current from `ToppedUp` Events (`topup_stream`)
+
+Calling `topup_stream(id, added_amount)` increases `stream.total_amount` on-chain while preserving `start_time`, `cliff_time`, and `end_time`, and emits [`ToppedUp`](../contracts/stream/src/events.rs#L49) — it does **not** emit a new `Created` event.
+
+- **Topics & fields:** `ToppedUp` indexes `sender` as a topic and carries `stream_id`, `added_amount`, `new_total_amount`, and `new_end_time` in data.
+- **Updating `total_amount`:** On a deduplicated `ToppedUp` event, update the stored stream record's `total_amount` to `new_total_amount` (and `end_time` to `new_end_time`, which equals the existing `end_time` under the current rate-increase semantic). Do not reset `withdrawn`.
+- **Retroactive vesting jump:** Once `total_amount` increases, client-side `vested`, `withdrawable`, and `locked` calculations must recompute from the new `total_amount`; for a stream already past `start_time` (and `cliff_time`, if set), `vested` and `withdrawable` jump immediately without time advancing.
+- **Backfilling gaps:** If `ToppedUp` arrives for a `stream_id` with no local `Created` record, call `get_stream(stream_id)` to backfill the current on-chain state (which already reflects the post-top-up `total_amount`).
+
+### Reading `destination` on `Withdrawn` Events (`withdraw_to`)
+
+[`Withdrawn`](../contracts/stream/src/events.rs#L26) indexes `recipient` as a topic and carries `id`, `amount`, and `destination` in data:
+
+- **Standard withdrawals (`withdraw`, `withdraw_amount`, `withdraw_many`):** `destination` is equal to `stream.recipient`.
+- **Destination withdrawals (`withdraw_to(id, destination, amount)`):** `destination` is the address that actually received the token transfer (for example, a cold wallet or third-party address), while the `recipient` topic remains `stream.recipient` (the party that authorized the call).
+- **How indexers and dashboards should read it:** Always attribute `amount` to the stream's `withdrawn` total using `id` (and `recipient` for stream ownership), and read `destination` as the payout target for transaction history views and token-transfer reconciliation.
+
+### Batch Withdrawals (`withdraw_many`)
+
+`withdraw_many(ids: Vec<u64>) -> Result<Vec<i128>, StreamError>` lets a caller claim all withdrawable balances across multiple streams in a single transaction, returning a `Vec<i128>` of amounts paid in the same order as `ids`:
+
+- **Batch limit:** Enforces `MAX_BATCH_SIZE = 20` stream IDs per call; passing more than 20 IDs fails with `StreamError::BatchTooLarge`. Chunk larger lists into slices of at most 20 IDs.
+- **One unknown ID fails the entire call:** Unlike `get_streams` (which returns `None` for missing IDs), `withdraw_many` is atomic — if any ID in `ids` does not exist, the whole call fails with `StreamError::StreamNotFound` and no transfers or state updates occur.
+- **Authorization & zero-payout streams:** Every distinct `recipient` across `ids` must authorize the call. Streams in the batch with `0` withdrawable balance are skipped (recording `0` in their output slot and emitting no `Withdrawn` event); if no stream in the batch pays out a positive amount, the whole call fails with `StreamError::NothingToWithdraw`.
+- **Events:** Emits **one `Withdrawn` event per paid stream** (each with `destination == stream.recipient`), paired with one token transfer per paid stream.
 
 ## Withdrawing Before Anything Has Vested
 
