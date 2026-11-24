@@ -35,6 +35,14 @@ const CANCEL_MEM_CEILING: u64 = 150_000;
 const CANCEL_READ_ENTRIES_CEILING: u32 = 10;
 const CANCEL_WRITE_ENTRIES_CEILING: u32 = 6;
 
+/// Ceiling limits for `topup_stream`:
+/// Expected baseline (~330,000 CPU instructions, ~126,000 memory bytes, ~8 read entries, ~4 write entries),
+/// leaving ~22-27% headroom consistent with `create_stream`, `withdraw`, and `cancel`.
+const TOPUP_STREAM_CPU_CEILING: u64 = 420_000;
+const TOPUP_STREAM_MEM_CEILING: u64 = 160_000;
+const TOPUP_STREAM_READ_ENTRIES_CEILING: u32 = 10;
+const TOPUP_STREAM_WRITE_ENTRIES_CEILING: u32 = 6;
+
 /// Ceiling limits for `get_streams` at 1 id:
 /// Measured: ~65,457 CPU instructions, ~35,165 memory bytes, 2 read entries, 0 write entries.
 const GET_STREAMS_1_CPU_CEILING: u64 = 85_000;
@@ -184,6 +192,48 @@ fn cancel_resource_budget_stays_within_ceiling() {
         "cancel write entries exceeded ceiling: measured {}, ceiling {}",
         res.write_entries,
         CANCEL_WRITE_ENTRIES_CEILING
+    );
+}
+
+#[test]
+fn topup_stream_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    t.contract.topup_stream(&id, &500);
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= TOPUP_STREAM_CPU_CEILING,
+        "topup_stream CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        TOPUP_STREAM_CPU_CEILING
+    );
+    assert!(
+        mem <= TOPUP_STREAM_MEM_CEILING,
+        "topup_stream memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        TOPUP_STREAM_MEM_CEILING
+    );
+    assert!(
+        total_reads <= TOPUP_STREAM_READ_ENTRIES_CEILING,
+        "topup_stream read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        TOPUP_STREAM_READ_ENTRIES_CEILING
+    );
+    assert!(
+        res.write_entries <= TOPUP_STREAM_WRITE_ENTRIES_CEILING,
+        "topup_stream write entries exceeded ceiling: measured {}, ceiling {}",
+        res.write_entries,
+        TOPUP_STREAM_WRITE_ENTRIES_CEILING
     );
 }
 
