@@ -156,6 +156,39 @@ fn withdraw_many_respects_the_batch_limit() {
 }
 
 #[test]
+fn withdraw_many_pays_cancelled_and_active_streams_in_one_batch() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let cancelled_id = t.open_default_stream(1_000);
+    let active_id = t.open_default_stream(1_000);
+
+    // Partially withdraw from the first stream before cancelling it.
+    t.set_time(400);
+    assert_eq!(t.contract.withdraw_amount(&cancelled_id, &100), 100);
+
+    // Cancel at midpoint (500 vested, 100 already withdrawn => 400 remaining).
+    t.set_time(600);
+    assert_eq!(t.contract.cancel(&cancelled_id), 500);
+
+    // Advance further; the cancelled stream stays frozen at 500 vested while
+    // the active stream accrues to 700.
+    t.set_time(800);
+    let ids = soroban_sdk::vec![&t.env, cancelled_id, active_id];
+    let amounts = t.contract.withdraw_many(&ids);
+    assert_eq!(amounts, soroban_sdk::vec![&t.env, 400, 700]);
+
+    assert_eq!(t.token.balance(&t.recipient), 1_200);
+    assert_eq!(t.contract.get_stream(&cancelled_id).withdrawn, 500);
+    assert_eq!(t.contract.get_stream(&active_id).withdrawn, 700);
+
+    // A second call at the same timestamp has nothing left to withdraw.
+    assert_eq!(
+        t.contract.try_withdraw_many(&ids),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+}
+
+#[test]
 fn withdraw_amount_takes_a_partial_balance() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
@@ -1541,4 +1574,43 @@ fn withdraw_to_then_cancel_preserves_accounting() {
     assert_eq!(t.token.balance(&destination), 500);
     assert_eq!(t.contract.withdrawable(&id), 0);
     assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
+fn withdraw_to_on_cancelled_stream_pays_up_to_frozen_vested_balance() {
+    use soroban_sdk::Event;
+
+    use crate::events::Withdrawn;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    // Cancel at midpoint so vested balance freezes at 500.
+    t.set_time(600);
+    assert_eq!(t.contract.cancel(&id), 500);
+
+    // Advancing past the original end time does not unfreeze the vested cap.
+    t.set_time(1_200);
+    let destination = Address::generate(&t.env);
+
+    assert_eq!(
+        t.contract.try_withdraw_to(&id, &destination, &501),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+
+    assert_eq!(t.contract.withdraw_to(&id, &destination, &500), 500);
+    t.assert_latest_stream_event_topics(
+        Withdrawn {
+            recipient: t.recipient.clone(),
+            id,
+            amount: 500,
+            destination: destination.clone(),
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+    assert_eq!(t.token.balance(&destination), 500);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.contract.withdrawable(&id), 0);
 }
