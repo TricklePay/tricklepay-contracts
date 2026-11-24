@@ -983,6 +983,15 @@ created on the new one. Integrators must point clients at the new contract ID.
 See [docs/INTEGRATOR_OPERATIONS.md](docs/INTEGRATOR_OPERATIONS.md) and
 [THREAT_MODEL.md § Immutability](THREAT_MODEL.md#immutability).
 
+## Known limitations
+
+- **No pause or admin:** The contract has no admin key, freeze, or emergency-stop mechanism, so running streams cannot be paused or overridden by a privileged party ([ADR: No Pause, Freeze, or Emergency-Stop Mechanism](docs/DECISIONS.md#adr-no-pause-freeze-or-emergency-stop-mechanism)).
+- **Tokens must be fee-free and non-reentrant:** The contract accepts any SEP-41 token without an allowlist and assumes transfers neither charge fees, rebase, nor re-enter the contract ([THREAT_MODEL.md § Trust assumptions about the token contract](THREAT_MODEL.md#trust-assumptions-about-the-token-contract)).
+- **Timestamps are seconds with no magnitude check:** `start_time`, `end_time`, and `cliff_time` are read as `u64` Unix seconds without bounds validation, so passing milliseconds creates a stream far in the future ([ADR: Do Not Bound Timestamp Magnitude](docs/ADR_TIMESTAMP_MAGNITUDE.md)).
+- **Batch reads are capped at 20:** `get_streams` (and `withdraw_many` / `withdrawable_many`) accept at most 20 stream IDs per call to stay within Soroban ledger resource limits ([THREAT_MODEL.md § Batch reads and cancellation previews](THREAT_MODEL.md#batch-reads-and-cancellation-previews)).
+- **Archived entries need restoring:** Stream records and instance storage expire when their Soroban TTL lapses and must be restored on-chain before calls can read or mutate them ([THREAT_MODEL.md § Storage lifetime and archival](THREAT_MODEL.md#storage-lifetime-and-archival)).
+- **Not upgradeable:** The contract is immutable with no proxy or WASM upgrade path, so fixes or new features require deploying a new contract address ([docs/INTEGRATOR_OPERATIONS.md § Redeployment Without Upgradeability](docs/INTEGRATOR_OPERATIONS.md#redeployment-without-upgradeability)).
+
 ## Events
 
 Every mutating entry point publishes a Soroban event when it succeeds. Rejected
