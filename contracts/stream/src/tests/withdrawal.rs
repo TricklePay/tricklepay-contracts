@@ -115,6 +115,34 @@ fn withdraw_many_pays_streams_in_order_with_one_transfer_per_stream() {
 }
 
 #[test]
+fn withdraw_many_pays_duplicated_id_only_once() {
+    let t = StreamTest::setup(3_000);
+    t.set_time(100);
+    let a = t.open_default_stream(1_000);
+    let b = t.open_default_stream(2_000);
+
+    t.set_time(600);
+    let amounts = t.contract.withdraw_many(&soroban_sdk::vec![&t.env, a, b, a]);
+    let publishers = t.event_publishers();
+
+    assert_eq!(amounts, soroban_sdk::vec![&t.env, 500, 1_000, 0]);
+    assert_eq!(t.token.balance(&t.recipient), 1_500);
+    assert_eq!(t.token.balance(&t.contract.address), 1_500);
+    assert_eq!(t.contract.get_stream(&a).withdrawn, 500);
+    assert_eq!(t.contract.get_stream(&b).withdrawn, 1_000);
+    assert_eq!(
+        publishers,
+        soroban_sdk::vec![
+            &t.env,
+            t.token_address.clone(),
+            t.contract.address.clone(),
+            t.token_address.clone(),
+            t.contract.address.clone(),
+        ]
+    );
+}
+
+#[test]
 fn withdraw_many_rejects_unknown_ids_atomically_and_requires_a_payout() {
     let t = StreamTest::setup(2_000);
     t.set_time(100);

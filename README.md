@@ -1231,8 +1231,11 @@ measured resource consumption in the local test environment using Soroban SDK
 | `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
 | `withdraw_many` (20 ids) | ~5,672,659 | ~1,347,808 | 27 | 23 | One token transfer and `Withdrawn` event per positive stream payout |
 | `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
+| `topup_stream` | ~330,000 | ~126,000 | 8 | 4 | Reads & updates stream total; extends instance & stream TTL; executes token deposit transfer |
 | `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
 | `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
+| `cancel_preview` | ~66,000 | ~35,500 | 2 | 0 | Strictly read-only; reads instance & single stream; computes settlement preview without state writes |
+| `withdrawable_many` (20 ids) | ~1,050,000 | ~530,000 | 21 | 0 | Strictly read-only; reads instance & 20 streams; computes withdrawable balances linearly |
 | `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
 | `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
 
