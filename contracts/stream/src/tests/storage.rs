@@ -534,6 +534,24 @@ fn withdraw_and_cancel_do_not_extend_the_instance_ttl() {
     assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
 }
 
+/// `topup_stream` extends a decayed instance TTL back to `ENTRY_TTL`.
+#[test]
+fn topup_stream_extends_the_instance_ttl() {
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    let elapsed = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(elapsed);
+    t.set_time(600);
+
+    assert_eq!(t.instance_ttl(), ENTRY_TTL - elapsed);
+
+    t.contract.topup_stream(&id, &500);
+
+    assert_eq!(t.instance_ttl(), ENTRY_TTL);
+}
+
 /// Repeated creates keep the instance alive indefinitely.
 #[test]
 fn repeated_creates_keep_the_instance_alive_indefinitely() {

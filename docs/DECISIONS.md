@@ -21,8 +21,9 @@ Add each new ADR to this list with its status and heading link.
 | [Full escrow at stream creation](#adr-full-escrow-at-stream-creation) | Accepted |
 | [Self-streams are allowed](#adr-self-streams-are-allowed-sender--recipient) | Accepted |
 | [Accept any token address without an allowlist](#adr-accept-any-token-address-without-an-allowlist) | Accepted |
-| [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Accepted |
+| [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Superseded |
 | [Third-party withdrawal (`withdraw_to`) without destination consent](#adr-third-party-withdrawal-withdraw_to-without-destination-consent) | Accepted |
+| [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl) | Accepted |
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
@@ -679,7 +680,7 @@ existing stream.
 
 ## ADR: Only `create_stream` Extends the Instance TTL
 
-**Status:** Accepted
+**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl)
 
 ### Context
 
@@ -847,5 +848,63 @@ semantics. `stream.withdrawn` is incremented before the token transfer, and the
 - `contracts/stream/src/tests/withdrawal.rs` — unit tests covering
   third-party payouts, recipient-only authorization, and `InvalidParticipant` on
   the contract's own address.
+
+## ADR: Only `create_stream` and `topup_stream` extend the instance TTL
+
+**Status:** Accepted
+
+### Context
+
+The earlier ADR, [Only `create_stream` extends the instance
+TTL](#adr-only-createstream-extends-the-instance-ttl), recorded that only
+`create_stream` called `storage::extend_instance_ttl`. When `topup_stream` was
+added as a sender-initiated funding entry point, it also called
+`storage::extend_instance_ttl(&env)` (`contracts/stream/src/contract.rs`),
+creating a discrepancy between the ADR, `contracts/stream/src/storage.rs` docs,
+and the test suite (`contracts/stream/src/tests/storage.rs` only pinned
+`withdraw` and `cancel` as non-extending).
+
+### Decision
+
+Only `create_stream` and `topup_stream` extend the instance TTL via
+`storage::extend_instance_ttl`. All other mutating entry points (`withdraw`,
+`withdraw_amount`, `withdraw_to`, `withdraw_many`, `cancel`) and all read-only
+views do **not** extend the instance TTL.
+
+`topup_stream` is a sender-initiated funding operation on an active or pending
+stream. Extending the instance TTL on `topup_stream` keeps the contract
+instance (and `StreamCount`) alive while senders are actively funding streams,
+without imposing instance-bump fees on recipient withdrawals, sender
+cancellations, or view calls.
+
+### Alternatives considered
+
+1. **Remove `extend_instance_ttl` from `topup_stream` so only `create_stream`
+   extends it.** Rejected: changing deployed behavior would alter the TTL
+   guarantees for deployments that top up existing long-running streams
+   regularly without creating new ones, and `topup_stream` is already a
+   sender-funded capital deposit similar to `create_stream`.
+2. **Extend the instance TTL on all mutating entry points.** Rejected for the
+   same reason as in the superseded ADR: high-frequency withdrawals and
+   cancellations do not read `StreamCount` and should not subsidize instance
+   rent.
+
+### Consequences
+
+- Deployments that either create new streams or top up existing streams at least
+  once per `BUMP_THRESHOLD` ledgers keep the instance entry alive.
+- Deployments that see only withdrawals, cancellations, and view calls for
+  longer than `ENTRY_TTL` will still have the instance archived until restored,
+  while existing persistent stream entries remain unaffected.
+
+### Related references
+
+- `contracts/stream/src/contract.rs` (`create_stream`, `topup_stream`) — the
+  two entry points that call `storage::extend_instance_ttl`.
+- `contracts/stream/src/storage.rs` — module-level and `DataKey::StreamCount`
+  documentation describing instance TTL extension.
+- `contracts/stream/src/tests/storage.rs` (`topup_stream_extends_the_instance_ttl`
+  and `withdraw_and_cancel_do_not_extend_the_instance_ttl`) — tests pinning both
+  sides of the policy.
 
   

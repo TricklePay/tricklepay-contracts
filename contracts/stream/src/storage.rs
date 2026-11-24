@@ -19,8 +19,9 @@
 //! **`StreamCount`** lives in *instance* storage alongside the contract's
 //! WASM. It is a single `u64` whose current value is the id to assign to the
 //! next stream. Because instance storage is not bumped by read-only contract
-//! calls, it is extended explicitly inside `create_stream`; a contract that is
-//! only queried and never written to will run its instance down over time.
+//! calls, it is extended explicitly inside `create_stream` and `topup_stream`;
+//! a contract that is only queried and never funded will run its instance down
+//! over time.
 //!
 //! **`Stream(id)`** entries live in *persistent* storage, one per stream,
 //! keyed by the numeric id. Each entry holds the full [`crate::types::Stream`]
@@ -70,7 +71,7 @@
 //! | `cancel_preview` | [`get_stream_readonly`] | **No** | Off-chain simulation preview; side-effect-free, emits no writes. |
 //! | `get_streams` | [`get_stream_readonly`] | **No** | Batch dashboard/indexer queries; avoids multi-entry write fees and keeps dormant streams expiring. |
 //! | `stream_exists` | [`has_stream`] | **No** | Existence check; reads presence only without loading full record. |
-//! | `stream_count` | [`stream_count`] | **No** | Instance counter read; instance TTL is extended only on `create_stream`. |
+//! | `stream_count` | [`stream_count`] | **No** | Instance counter read; instance TTL is extended only on `create_stream` and `topup_stream`. |
 //!
 //! # Rationale for Read-Only Helpers
 //!
@@ -127,7 +128,8 @@ pub enum DataKey {
     ///
     /// Because instance storage is not bumped by read-only calls, this entry
     /// is extended explicitly by [`extend_instance_ttl`] inside `create_stream`
-    /// to keep it alive for as long as the streams it numbers.
+    /// and `topup_stream` to keep it alive for as long as the streams it
+    /// numbers.
     StreamCount,
     /// A single stream record, keyed by its numeric id.
     ///
