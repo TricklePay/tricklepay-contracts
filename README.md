@@ -205,11 +205,18 @@ sequenceDiagram
     activate TokenContract
     TokenContract-->>StreamContract: ok
     deactivate TokenContract
-    StreamContract->>StreamContract: total_amount += added_amount (rate increases)
+    StreamContract->>StreamContract: total_amount += added_amount (recomputes vested over elapsed)
     StreamContract-->>Sender: emit ToppedUp(sender, id, added_amount, new_total, end_time)
     StreamContract-->>Sender: return ok
     deactivate StreamContract
 ```
+
+`topup_stream` raises `total_amount` while keeping `start_time`, `end_time`, and `cliff_time` unchanged, so the vested amount is recomputed over the entire elapsed time since `start_time`. Once the cliff has passed, topping up causes the vested amount to jump retroactively in the same ledger by `added_amount * elapsed / duration` (subject to integer division rounding).
+
+For example, take a stream of `1,000` tokens over `1,000` seconds (`start_time = 100`, `end_time = 1100`, `cliff_time = 100`) topped up by `1,000` tokens at the midpoint (`now = 600`, `elapsed = 500`):
+
+- **Before top-up:** `total_amount = 1,000`, `vested = 500`, `withdrawable = 500`, `locked = 500`.
+- **After top-up (`+1,000`):** `total_amount = 2,000`, `vested = 1,000` (`500 + 1,000 * 500 / 1,000`), `withdrawable = 1,000`, `locked = 1,000`.
 
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
