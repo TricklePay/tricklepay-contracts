@@ -62,6 +62,20 @@ const WITHDRAW_MANY_20_MEM_CEILING: u64 = 4_500_000;
 const WITHDRAW_MANY_20_READ_ENTRIES_CEILING: u32 = 60;
 const WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING: u32 = 50;
 
+/// Ceiling limits for `cancel_preview`:
+/// Expected baseline (~66,000 CPU instructions, ~35,500 memory bytes, 2 read entries, 0 write entries),
+/// leaving headroom consistent with `get_streams` (1 id).
+const CANCEL_PREVIEW_CPU_CEILING: u64 = 90_000;
+const CANCEL_PREVIEW_MEM_CEILING: u64 = 50_000;
+const CANCEL_PREVIEW_READ_ENTRIES_CEILING: u32 = 3;
+
+/// Ceiling limits for `withdrawable_many` at 20 ids:
+/// Expected baseline (~1,050,000 CPU instructions, ~530,000 memory bytes, 21 read entries, 0 write entries),
+/// leaving headroom consistent with `get_streams` (20 ids).
+const WITHDRAWABLE_MANY_20_CPU_CEILING: u64 = 1_350_000;
+const WITHDRAWABLE_MANY_20_MEM_CEILING: u64 = 650_000;
+const WITHDRAWABLE_MANY_20_READ_ENTRIES_CEILING: u32 = 25;
+
 #[test]
 fn create_stream_resource_budget_stays_within_ceiling() {
     let t = StreamTest::setup(1_000);
@@ -365,5 +379,93 @@ fn withdraw_many_batch_20_resource_budget_stays_within_ceiling() {
         "withdraw_many(20) write entries exceeded ceiling: measured {}, ceiling {}",
         res.write_entries,
         WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING
+    );
+}
+
+#[test]
+fn cancel_preview_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    t.set_time(600);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let settlement = t.contract.cancel_preview(&id);
+    assert_eq!(settlement.recipient_remaining, 500);
+    assert_eq!(settlement.refund, 500);
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= CANCEL_PREVIEW_CPU_CEILING,
+        "cancel_preview CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        CANCEL_PREVIEW_CPU_CEILING
+    );
+    assert!(
+        mem <= CANCEL_PREVIEW_MEM_CEILING,
+        "cancel_preview memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        CANCEL_PREVIEW_MEM_CEILING
+    );
+    assert!(
+        total_reads <= CANCEL_PREVIEW_READ_ENTRIES_CEILING,
+        "cancel_preview read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        CANCEL_PREVIEW_READ_ENTRIES_CEILING
+    );
+    assert_eq!(
+        res.write_entries, 0,
+        "cancel_preview is read-only and must never write ledger entries"
+    );
+}
+
+#[test]
+fn withdrawable_many_batch_20_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(25_000);
+    t.set_time(100);
+
+    let mut ids = Vec::new(&t.env);
+    for _ in 0..20 {
+        ids.push_back(t.open_default_stream(1_000));
+    }
+
+    t.set_time(600);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let amounts = t.contract.withdrawable_many(&ids);
+    assert_eq!(amounts.len(), 20);
+    assert_eq!(amounts.get(0), Some(500));
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= WITHDRAWABLE_MANY_20_CPU_CEILING,
+        "withdrawable_many(20) CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        WITHDRAWABLE_MANY_20_CPU_CEILING
+    );
+    assert!(
+        mem <= WITHDRAWABLE_MANY_20_MEM_CEILING,
+        "withdrawable_many(20) memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        WITHDRAWABLE_MANY_20_MEM_CEILING
+    );
+    assert!(
+        total_reads <= WITHDRAWABLE_MANY_20_READ_ENTRIES_CEILING,
+        "withdrawable_many(20) read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        WITHDRAWABLE_MANY_20_READ_ENTRIES_CEILING
+    );
+    assert_eq!(
+        res.write_entries, 0,
+        "withdrawable_many is read-only and must never write ledger entries"
     );
 }
