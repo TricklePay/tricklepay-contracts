@@ -68,6 +68,17 @@ pub trait Contract {
         id: u64,
         new_recipient: soroban_sdk::Address,
     ) -> Result<(), StreamError>;
+    fn create_stream_with_reference(
+        env: soroban_sdk::Env,
+        sender: soroban_sdk::Address,
+        recipient: soroban_sdk::Address,
+        token: soroban_sdk::Address,
+        total_amount: i128,
+        start_time: u64,
+        end_time: u64,
+        cliff_time: u64,
+        reference: soroban_sdk::Bytes,
+    ) -> Result<u64, StreamError>;
 }
 #[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -77,6 +88,7 @@ pub struct Stream {
     pub created_at: u64,
     pub end_time: u64,
     pub recipient: soroban_sdk::Address,
+    pub reference: soroban_sdk::Bytes,
     pub sender: soroban_sdk::Address,
     pub start_time: u64,
     pub token: soroban_sdk::Address,
@@ -129,6 +141,7 @@ pub enum StreamError {
     InvalidParticipant = 13,
     BatchTooLarge = 14,
     EmptyBatch = 15,
+    ReferenceTooLong = 16,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["created"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -144,6 +157,7 @@ pub struct Created {
     pub end_time: u64,
     pub cliff_time: u64,
     pub created_at: u64,
+    pub reference: soroban_sdk::Bytes,
 }
 #[soroban_sdk::contractevent(export = false, topics = ["topped_up"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]

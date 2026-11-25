@@ -1,6 +1,6 @@
 //! Public events emitted by the stream contract for off-chain consumers.
 
-use soroban_sdk::{contractevent, Address, Env};
+use soroban_sdk::{contractevent, Address, Bytes, Env};
 
 use crate::types::Stream;
 
@@ -19,6 +19,7 @@ pub struct Created {
     pub end_time: u64,
     pub cliff_time: u64,
     pub created_at: u64,
+    pub reference: Bytes,
 }
 
 /// Emitted when a stream's recipient transfers their receiving rights.
@@ -83,6 +84,7 @@ pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
         end_time: stream.end_time,
         cliff_time: stream.cliff_time,
         created_at: stream.created_at,
+        reference: stream.reference.clone(),
     }
     .publish(env);
 }

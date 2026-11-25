@@ -1,6 +1,6 @@
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Bytes, Env, Vec};
 
-pub use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE, MAX_REFERENCE_LENGTH};
 use crate::error::StreamError;
 use crate::events;
 use crate::status;
@@ -156,6 +156,85 @@ impl StreamContract {
             cliff_time,
             cancelled: false,
             created_at,
+            reference: Bytes::new(&env),
+        };
+        storage::set_stream(&env, id, &stream);
+        storage::set_stream_count(&env, next_id);
+        storage::extend_instance_ttl(&env);
+
+        events::publish_created(&env, id, &stream);
+
+        Ok(id)
+    }
+
+    /// Open a stream with an optional opaque payroll or invoice reference.
+    ///
+    /// `reference` is bounded to [`MAX_REFERENCE_LENGTH`] bytes. It may contain
+    /// any bytes; UTF-8 encoding is recommended for human-readable identifiers
+    /// but is not required or enforced. The reference is stored on the stream
+    /// and published in the `Created` event. Existing `create_stream` callers
+    /// are unchanged and create streams with an empty reference.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_stream_with_reference(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token: Address,
+        total_amount: i128,
+        start_time: u64,
+        end_time: u64,
+        cliff_time: u64,
+        reference: Bytes,
+    ) -> Result<u64, StreamError> {
+        sender.require_auth();
+
+        if reference.len() > MAX_REFERENCE_LENGTH {
+            return Err(StreamError::ReferenceTooLong);
+        }
+
+        let this = env.current_contract_address();
+        if sender == this || recipient == this || token == this {
+            return Err(StreamError::InvalidParticipant);
+        }
+        if total_amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        if total_amount > MAX_AMOUNT {
+            return Err(StreamError::AmountTooLarge);
+        }
+        if start_time >= end_time {
+            return Err(StreamError::InvalidTimeRange);
+        }
+        if cliff_time < start_time || cliff_time > end_time {
+            return Err(StreamError::InvalidCliff);
+        }
+
+        let created_at = env.ledger().timestamp();
+        if end_time <= created_at {
+            return Err(StreamError::StreamWindowInPast);
+        }
+
+        let id = storage::stream_count(&env);
+        let next_id = id.checked_add(1).ok_or(StreamError::StreamCountExhausted)?;
+
+        TokenClient::new(&env, &token).transfer(
+            &sender,
+            env.current_contract_address(),
+            &total_amount,
+        );
+
+        let stream = Stream {
+            sender,
+            recipient,
+            token,
+            total_amount,
+            withdrawn: 0,
+            start_time,
+            end_time,
+            cliff_time,
+            cancelled: false,
+            created_at,
+            reference,
         };
         storage::set_stream(&env, id, &stream);
         storage::set_stream_count(&env, next_id);
@@ -284,6 +363,7 @@ impl StreamContract {
                 cliff_time: entry.cliff_time,
                 cancelled: false,
                 created_at: now,
+                reference: Bytes::new(&env),
             };
             storage::set_stream(&env, id, &stream);
             events::publish_created(&env, id, &stream);

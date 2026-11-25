@@ -26,6 +26,7 @@ Add each new ADR to this list with its status and heading link.
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
 | [Recipient transfer rights](#adr-recipient-transfer-rights) | Accepted |
+| [Stream references are opaque bounded bytes](#adr-stream-references-are-opaque-bounded-bytes) | Accepted |
 
 ## New ADR template note
 
@@ -56,6 +57,22 @@ status and a link to its heading in the index above.
   `new_recipient` and carries `stream_id` in the data payload.
 - **Related References**:
   - See [DESIGN_RECIPIENT_TRANSFER.md](./DESIGN_RECIPIENT_TRANSFER.md).
+
+## ADR: Stream References are Opaque Bounded Bytes
+
+- **Status**: Accepted
+- **Context**: Payroll and invoice integrations need to correlate streams with
+  records in an external system, but reference formats vary by integration.
+- **Decision**: A stream reference is an opaque `Bytes` value of at most 64
+  bytes. UTF-8 is recommended for readable identifiers, but the contract does
+  not validate text encoding or normalize contents. An empty byte string means
+  no reference.
+- **API**: `create_stream_with_reference` adds the reference parameter.
+  `create_stream` remains source-compatible at the entry-point level and creates
+  streams with an empty reference.
+- **Consequences**: The reference is copied into stream storage and the
+  `Created` event. References over 64 bytes are rejected with
+  `StreamError::ReferenceTooLong` (code 16) before state or token changes.
 
 ## ADR 1: Enumeration is off-chain, not an entry point
 

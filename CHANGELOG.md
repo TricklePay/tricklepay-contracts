@@ -51,6 +51,13 @@ contract.
 
 ### Added
 
+- **ABI:** Added `MAX_REFERENCE_LENGTH = 64` and
+  `create_stream_with_reference(..., reference: Bytes) -> u64`, preserving the
+  existing `create_stream` signature and behavior. References are opaque bytes,
+  and UTF-8 is recommended but not enforced.
+- **ABI:** Added `reference: Bytes` to the `Stream` record and `Created` event.
+  Existing streams and streams created by `create_stream` use an empty byte
+  string. Added `ReferenceTooLong` error code `16` for references over 64 bytes.
 - **ABI:** Added `transfer_recipient(id, new_recipient) -> ()`, allowing the
   current recipient to assign withdrawal rights to another address.
 - **ABI:** Added `RecipientTransferred` event with indexed `old_recipient` and

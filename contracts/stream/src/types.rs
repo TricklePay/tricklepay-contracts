@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Bytes};
 
 /// A token stream with a linear schedule and optional cliff.
 #[contracttype]
@@ -28,6 +28,10 @@ pub struct Stream {
     /// record is self-describing and streams that share a `start_time` can be
     /// ordered by creation.
     pub created_at: u64,
+    /// Optional opaque matching reference, empty when not provided.
+    ///
+    /// The contract stores at most 64 bytes and does not interpret the bytes.
+    pub reference: Bytes,
 }
 
 /// One entry in a [`StreamContract::create_streams`](crate::StreamContract::create_streams)

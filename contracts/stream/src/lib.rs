@@ -69,7 +69,7 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE, MAX_REFERENCE_LENGTH};
 pub use contract::{StreamContract, StreamContractClient};
 pub use error::StreamError;
 pub use types::{Stream, StreamInput, StreamStatus};

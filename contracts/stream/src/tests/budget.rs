@@ -10,7 +10,7 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Vec};
+use soroban_sdk::{testutils::Address as _, vec, Address, Bytes, Vec};
 
 use super::helpers::{StreamTest, END, START};
 
@@ -22,6 +22,12 @@ const CREATE_STREAM_CPU_CEILING: u64 = 400_000;
 const CREATE_STREAM_MEM_CEILING: u64 = 160_000;
 const CREATE_STREAM_READ_ENTRIES_CEILING: u32 = 12;
 const CREATE_STREAM_WRITE_ENTRIES_CEILING: u32 = 7;
+
+/// Ceiling limits for `create_stream_with_reference` with a 64-byte reference.
+const CREATE_STREAM_WITH_REFERENCE_CPU_CEILING: u64 = 450_000;
+const CREATE_STREAM_WITH_REFERENCE_MEM_CEILING: u64 = 180_000;
+const CREATE_STREAM_WITH_REFERENCE_READ_ENTRIES_CEILING: u32 = 12;
+const CREATE_STREAM_WITH_REFERENCE_WRITE_ENTRIES_CEILING: u32 = 7;
 
 /// Ceiling limits for `withdraw`:
 /// Measured: ~327,290 CPU instructions, ~125,723 memory bytes, 8 read entries, 4 write entries.
@@ -161,6 +167,55 @@ fn create_stream_resource_budget_stays_within_ceiling() {
         "create_stream write entries exceeded ceiling: measured {}, ceiling {}",
         res.write_entries,
         CREATE_STREAM_WRITE_ENTRIES_CEILING
+    );
+}
+
+#[test]
+fn create_stream_with_reference_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let reference = Bytes::from_slice(&t.env, &[65u8; 64]);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let _id = t.contract.create_stream_with_reference(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+        &reference,
+    );
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= CREATE_STREAM_WITH_REFERENCE_CPU_CEILING,
+        "create_stream_with_reference CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        CREATE_STREAM_WITH_REFERENCE_CPU_CEILING
+    );
+    assert!(
+        mem <= CREATE_STREAM_WITH_REFERENCE_MEM_CEILING,
+        "create_stream_with_reference memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        CREATE_STREAM_WITH_REFERENCE_MEM_CEILING
+    );
+    assert!(
+        total_reads <= CREATE_STREAM_WITH_REFERENCE_READ_ENTRIES_CEILING,
+        "create_stream_with_reference read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        CREATE_STREAM_WITH_REFERENCE_READ_ENTRIES_CEILING
+    );
+    assert!(
+        res.write_entries <= CREATE_STREAM_WITH_REFERENCE_WRITE_ENTRIES_CEILING,
+        "create_stream_with_reference write entries exceeded ceiling: measured {}, ceiling {}",
+        res.write_entries,
+        CREATE_STREAM_WITH_REFERENCE_WRITE_ENTRIES_CEILING
     );
 }
 

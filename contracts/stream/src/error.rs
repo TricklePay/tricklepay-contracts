@@ -96,6 +96,8 @@ pub enum StreamError {
     ///
     /// Interface code `15`.
     EmptyBatch = 15,
+    /// A stream reference exceeds [`crate::MAX_REFERENCE_LENGTH`] bytes.
+    ReferenceTooLong = 16,
 }
 
 impl StreamError {
@@ -115,6 +117,7 @@ impl StreamError {
         StreamError::InvalidParticipant,
         StreamError::BatchTooLarge,
         StreamError::EmptyBatch,
+        StreamError::ReferenceTooLong,
     ];
 
     /// Returns the variant name as a static string.
@@ -134,6 +137,7 @@ impl StreamError {
             StreamError::InvalidParticipant => "InvalidParticipant",
             StreamError::BatchTooLarge => "BatchTooLarge",
             StreamError::EmptyBatch => "EmptyBatch",
+            StreamError::ReferenceTooLong => "ReferenceTooLong",
         }
     }
 }

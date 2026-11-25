@@ -623,6 +623,7 @@ reassigned.
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
 | 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request, or `create_streams` is called with more than 20 entries.                                                                     |
 | 15   | `EmptyBatch`             | `create_streams` is called with no entries.                                                                                                                                                                        |
+| 16   | `ReferenceTooLong`        | `create_stream_with_reference` receives more than `MAX_REFERENCE_LENGTH` (64) bytes. No state or tokens change.                                                                                                     |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as
@@ -1008,9 +1009,16 @@ Emitted by `create_stream` when a new stream is opened successfully.
 | `end_time`     | data  | `u64`     | Unix timestamp (seconds) when the stream is fully vested                                                   |
 | `cliff_time`   | data  | `u64`     | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
 | `created_at`   | data  | `u64`     | Ledger timestamp (seconds) when the stream was created                                                     |
+| `reference`    | data  | `Bytes`   | Opaque matching reference, or empty when none was supplied                                               |
 
 Indexers can subscribe on the `sender` or `recipient` topics to receive all
 streams for a given address without scanning every event.
+
+The optional reference is 64 bytes or fewer and is stored as an opaque
+`Bytes` value. UTF-8 text is recommended for invoice or payroll identifiers,
+but the contract does not validate text encoding or normalize the bytes.
+Call `create_stream_with_reference` to supply it; `create_stream` remains
+unchanged and stores an empty reference.
 
 ### `Withdrawn`
 

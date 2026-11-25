@@ -2,14 +2,83 @@
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    token, Address,
+    token, Address, Bytes,
 };
 
 use crate::contract::{StreamContract, StreamContractClient};
 
-use crate::{StreamError, StreamStatus, MAX_AMOUNT};
+use crate::{StreamError, StreamStatus, MAX_AMOUNT, MAX_REFERENCE_LENGTH};
 
 use super::helpers::{MockTokenWithDecimals, MockTokenWithDecimalsClient, StreamTest};
+
+#[test]
+fn create_stream_with_reference_stores_and_reports_the_reference() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let reference = Bytes::from_slice(&t.env, b"INV-2026-0042");
+
+    let id = t.contract.create_stream_with_reference(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+        &reference,
+    );
+
+    assert_eq!(t.contract.get_stream(&id).reference, reference);
+}
+
+#[test]
+fn existing_create_stream_uses_an_empty_reference() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+
+    assert_eq!(t.contract.get_stream(&id).reference, Bytes::new(&t.env));
+}
+
+#[test]
+fn reference_length_is_bounded_without_changing_storage_or_tokens_on_rejection() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    let too_long = [65u8; 65];
+    let too_long = Bytes::from_slice(&t.env, &too_long);
+    assert_eq!(
+        t.contract.try_create_stream_with_reference(
+            &t.sender,
+            &t.recipient,
+            &t.token_address,
+            &1_000,
+            &100,
+            &1_100,
+            &100,
+            &too_long,
+        ),
+        Err(Ok(StreamError::ReferenceTooLong))
+    );
+    assert_eq!(t.contract.stream_count(), 0);
+
+    let maximum = [65u8; 64];
+    let maximum = Bytes::from_slice(&t.env, &maximum);
+    let id = t.contract.create_stream_with_reference(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+        &maximum,
+    );
+    assert_eq!(
+        t.contract.get_stream(&id).reference.len(),
+        MAX_REFERENCE_LENGTH
+    );
+}
 
 #[test]
 fn create_stream_locks_funds_and_assigns_id() {
