@@ -280,3 +280,101 @@ fn compiled_wasm_stream_completion_lifecycle() {
         Err(Ok(StreamError::NothingToWithdraw))
     );
 }
+
+#[test]
+fn compiled_wasm_withdraw_to_pays_third_party_destination() {
+    let wasm_bytes = match load_wasm_bytes_or_skip() {
+        Some(bytes) => bytes,
+        None => return,
+    };
+
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(100);
+
+    let contract_id = env.register(wasm_bytes.as_slice(), ());
+    let client = StreamContractClient::new(&env, &contract_id);
+
+    let issuer = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(issuer);
+    let token_address = sac.address();
+    let token = token::TokenClient::new(&env, &token_address);
+    let token_admin = token::StellarAssetClient::new(&env, &token_address);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let destination = Address::generate(&env);
+
+    token_admin.mint(&sender, &5_000);
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    env.ledger().set_timestamp(600);
+    let withdrawn = client.withdraw_to(&stream_id, &destination, &300);
+    assert_eq!(withdrawn, 300);
+    assert_eq!(token.balance(&destination), 300);
+    assert_eq!(token.balance(&recipient), 0);
+    assert_eq!(token.balance(&contract_id), 700);
+    assert_eq!(client.withdrawable(&stream_id), 200);
+}
+
+#[test]
+fn compiled_wasm_withdraw_many_pays_two_streams() {
+    let wasm_bytes = match load_wasm_bytes_or_skip() {
+        Some(bytes) => bytes,
+        None => return,
+    };
+
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(100);
+
+    let contract_id = env.register(wasm_bytes.as_slice(), ());
+    let client = StreamContractClient::new(&env, &contract_id);
+
+    let issuer = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(issuer);
+    let token_address = sac.address();
+    let token = token::TokenClient::new(&env, &token_address);
+    let token_admin = token::StellarAssetClient::new(&env, &token_address);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    token_admin.mint(&sender, &5_000);
+
+    let stream_a = client.create_stream(
+        &sender,
+        &recipient,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    let stream_b = client.create_stream(
+        &sender,
+        &recipient,
+        &token_address,
+        &2_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    env.ledger().set_timestamp(600);
+    let amounts = client.withdraw_many(&soroban_sdk::vec![&env, stream_a, stream_b]);
+    assert_eq!(amounts, soroban_sdk::vec![&env, 500, 1_000]);
+    assert_eq!(token.balance(&recipient), 1_500);
+    assert_eq!(token.balance(&contract_id), 1_500);
+    assert_eq!(client.withdrawable(&stream_a), 0);
+    assert_eq!(client.withdrawable(&stream_b), 0);
+}

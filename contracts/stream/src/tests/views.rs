@@ -454,6 +454,40 @@ fn vested_at_projects_the_schedule_and_freezes_after_cancellation() {
 }
 
 #[test]
+fn rate_per_second_and_vested_at_recompute_retroactively_after_topup() {
+    let t = StreamTest::setup(5_000);
+    t.set_time(100);
+    // Stream over [100, 1_100] (duration = 1_000) with initial total = 1_000.
+    let id = t.open_default_stream(1_000);
+
+    assert_eq!(t.contract.rate_per_second(&id), 1);
+    assert_eq!(t.contract.vested_at(&id, &350), 250);
+
+    // Advance to t = 600 and double the total via top-up (new total = 2_000).
+    t.set_time(600);
+    t.contract.topup_stream(&id, &1_000);
+
+    // rate_per_second doubles from 1 to 2.
+    assert_eq!(t.contract.rate_per_second(&id), 2);
+
+    // vested_at for a timestamp before the top-up (350 < 600) uses the new total.
+    assert_eq!(t.contract.vested_at(&id, &350), 500);
+
+    // Both rate_per_second * elapsed and vested_at agree with vested at the current ledger time.
+    let current_vested = t.contract.vested(&id);
+    assert_eq!(current_vested, 1_000);
+    assert_eq!(t.contract.vested_at(&id, &600), current_vested);
+    assert_eq!(t.contract.rate_per_second(&id) * 500, current_vested);
+
+    // Advance further to t = 800 and confirm they still agree.
+    t.set_time(800);
+    let later_vested = t.contract.vested(&id);
+    assert_eq!(later_vested, 1_400);
+    assert_eq!(t.contract.vested_at(&id, &800), later_vested);
+    assert_eq!(t.contract.rate_per_second(&id) * 700, later_vested);
+}
+
+#[test]
 fn progress_reports_basis_points() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
