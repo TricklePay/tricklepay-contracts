@@ -8,6 +8,7 @@
 //! | `helpers`         | `StreamTest` fixture and shared utilities                     |
 //! | `budget`          | Resource budget regression tests and entry point ceilings     |
 //! | `creation`        | `create_stream`: validation, parameters, participant checks   |
+//! | `batch_creation`  | `create_streams`: atomic multi-stream creation and events     |
 //! | `withdrawal`      | `withdraw`, `withdraw_amount`: vesting, cliff, partial draws  |
 //! | `cancellation`    | `cancel`: refunds, freezing, cliff scenarios, lifecycle       |
 //! | `views`           | Read-only queries: `progress`, `locked`, `status`, etc.       |
@@ -23,6 +24,7 @@
 pub mod helpers;
 
 mod auth;
+mod batch_creation;
 mod budget;
 mod cancellation;
 mod creation;

@@ -5,7 +5,7 @@ use crate::error::StreamError;
 use crate::events;
 use crate::status;
 use crate::storage;
-use crate::types::{Stream, StreamStatus};
+use crate::types::{Stream, StreamInput, StreamStatus};
 use crate::vesting;
 
 #[contract]
@@ -162,6 +162,134 @@ impl StreamContract {
         events::publish_created(&env, id, &stream);
 
         Ok(id)
+    }
+
+    /// Open several streams from one `sender` and `token` in a single call.
+    ///
+    /// Each [`StreamInput`] entry carries its own recipient, amount, and
+    /// schedule; the batch is funded by one token transfer of the summed
+    /// amounts. The returned ids correspond to entries in input order.
+    ///
+    /// # All-or-nothing validation
+    ///
+    /// The batch is limited to between 1 and [`MAX_BATCH_SIZE`] entries. An
+    /// empty batch returns [`StreamError::EmptyBatch`], an oversized one
+    /// [`StreamError::BatchTooLarge`]. **Any invalid entry rejects the entire
+    /// batch**: no ids are consumed, no streams are written, no token transfer
+    /// occurs, and no events are published.
+    ///
+    /// Checks run in this order, before any token transfer or storage write:
+    ///
+    /// 1. **Authorization** — `sender` must authorize the call.
+    /// 2. **Batch shape** — empty or oversized batches are rejected.
+    /// 3. **Shared participants** — [`StreamError::InvalidParticipant`] if
+    ///    `sender` or `token` is this contract's own address, or if `token` is
+    ///    the `sender`.
+    /// 4. **Entries, in input order** — participant addresses (the recipient
+    ///    must differ from the sender and be neither this contract's address
+    ///    nor the token), then amount, schedule, cliff, and future end time,
+    ///    using the same rules as `create_stream`.
+    /// 5. **Combined amount** — [`StreamError::AmountTooLarge`] if summing the
+    ///    entries overflows `i128` or exceeds [`MAX_AMOUNT`].
+    /// 6. **Capacity** — [`StreamError::StreamCountExhausted`] if the id counter
+    ///    cannot allocate every entry without overflowing `u64`.
+    ///
+    /// After validation the combined amount is transferred once from `sender`
+    /// to the contract, then each stream is stored and one existing
+    /// [`events::Created`] event is published per stream in input order. There
+    /// is no separate batch event.
+    pub fn create_streams(
+        env: Env,
+        sender: Address,
+        token: Address,
+        entries: Vec<StreamInput>,
+    ) -> Result<Vec<u64>, StreamError> {
+        sender.require_auth();
+
+        // 1. Batch shape. Both bounds are checked before any per-entry work so
+        //    an empty or oversized request costs the caller almost nothing.
+        if entries.is_empty() {
+            return Err(StreamError::EmptyBatch);
+        }
+        if entries.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        // 2. Shared participants. This contract's own address is never valid in
+        //    either role, and the token cannot also be the sender.
+        let this = env.current_contract_address();
+        if sender == this || token == this || token == sender {
+            return Err(StreamError::InvalidParticipant);
+        }
+
+        // 3. Every entry, in input order. A batch is accepted only if all of
+        //    its entries are valid, so a single failure rejects the lot.
+        let now = env.ledger().timestamp();
+        for entry in entries.iter() {
+            if entry.recipient == this || entry.recipient == token || entry.recipient == sender {
+                return Err(StreamError::InvalidParticipant);
+            }
+            if entry.total_amount <= 0 {
+                return Err(StreamError::InvalidAmount);
+            }
+            if entry.total_amount > MAX_AMOUNT {
+                return Err(StreamError::AmountTooLarge);
+            }
+            if entry.start_time >= entry.end_time {
+                return Err(StreamError::InvalidTimeRange);
+            }
+            if entry.cliff_time < entry.start_time || entry.cliff_time > entry.end_time {
+                return Err(StreamError::InvalidCliff);
+            }
+            if entry.end_time <= now {
+                return Err(StreamError::StreamWindowInPast);
+            }
+        }
+
+        // 4. Combined amount. The checked sum keeps the single transfer inside
+        //    the supported amount ceiling.
+        let mut total: i128 = 0;
+        for entry in entries.iter() {
+            total = total
+                .checked_add(entry.total_amount)
+                .ok_or(StreamError::AmountTooLarge)?;
+            if total > MAX_AMOUNT {
+                return Err(StreamError::AmountTooLarge);
+            }
+        }
+
+        // 5. Capacity. Reserve every id before any tokens move.
+        let start_id = storage::stream_count(&env);
+        let next_id = start_id
+            .checked_add(u64::from(entries.len()))
+            .ok_or(StreamError::StreamCountExhausted)?;
+
+        // Effects. Every rejection above returns before this point, so a failed
+        // batch never moves tokens or touches storage.
+        TokenClient::new(&env, &token).transfer(&sender, env.current_contract_address(), &total);
+
+        let mut ids = Vec::new(&env);
+        for (offset, entry) in entries.iter().enumerate() {
+            let id = start_id + offset as u64;
+            let stream = Stream {
+                sender: sender.clone(),
+                recipient: entry.recipient,
+                token: token.clone(),
+                total_amount: entry.total_amount,
+                withdrawn: 0,
+                start_time: entry.start_time,
+                end_time: entry.end_time,
+                cliff_time: entry.cliff_time,
+                cancelled: false,
+            };
+            storage::set_stream(&env, id, &stream);
+            events::publish_created(&env, id, &stream);
+            ids.push_back(id);
+        }
+        storage::set_stream_count(&env, next_id);
+        storage::extend_instance_ttl(&env);
+
+        Ok(ids)
     }
 
     /// Transfers the recipient's full withdrawable balance and returns the amount.

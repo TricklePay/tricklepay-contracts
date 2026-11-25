@@ -87,6 +87,7 @@ fn stream_error_all_matches_exhaustive_match() {
         StreamError::StreamCountExhausted => check_in_all(err),
         StreamError::InvalidParticipant => check_in_all(err),
         StreamError::BatchTooLarge => check_in_all(err),
+        StreamError::EmptyBatch => check_in_all(err),
     };
 
     for &err in StreamError::ALL {
@@ -94,7 +95,7 @@ fn stream_error_all_matches_exhaustive_match() {
     }
     assert_eq!(
         StreamError::ALL.len(),
-        13,
+        14,
         "StreamError::ALL must have one entry per enum variant"
     );
 }

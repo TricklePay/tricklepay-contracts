@@ -71,7 +71,7 @@ mod tests;
 pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
 pub use contract::{StreamContract, StreamContractClient};
 pub use error::StreamError;
-pub use types::{Stream, StreamStatus};
+pub use types::{Stream, StreamInput, StreamStatus};
 
 use soroban_sdk::contractmeta;
 

@@ -59,7 +59,7 @@ use soroban_sdk::contracterror;
 /// **Values must never be reused or reordered.** Do not renumber a variant,
 /// do not insert a variant with an existing value, and do not give a retired
 /// value (such as `2`) to a new variant. A new error takes the next unused
-/// value after the highest one listed here; the next unused code is `15`.
+/// value after the highest one listed here; the next unused code is `16`.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -92,6 +92,10 @@ pub enum StreamError {
     ///
     /// Interface code `14`.
     BatchTooLarge = 14,
+    /// A batch stream creation call was given no entries.
+    ///
+    /// Interface code `15`.
+    EmptyBatch = 15,
 }
 
 impl StreamError {
@@ -110,6 +114,7 @@ impl StreamError {
         StreamError::StreamCountExhausted,
         StreamError::InvalidParticipant,
         StreamError::BatchTooLarge,
+        StreamError::EmptyBatch,
     ];
 
     /// Returns the variant name as a static string.
@@ -128,6 +133,7 @@ impl StreamError {
             StreamError::StreamCountExhausted => "StreamCountExhausted",
             StreamError::InvalidParticipant => "InvalidParticipant",
             StreamError::BatchTooLarge => "BatchTooLarge",
+            StreamError::EmptyBatch => "EmptyBatch",
         }
     }
 }

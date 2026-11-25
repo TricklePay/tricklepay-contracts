@@ -10,9 +10,11 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{vec, Vec};
+use soroban_sdk::{testutils::Address as _, vec, Address, Vec};
 
-use super::helpers::StreamTest;
+use super::helpers::{StreamTest, END, START};
+
+use crate::StreamInput;
 
 /// Ceiling limits for `create_stream`:
 /// Measured: ~329,231 CPU instructions, ~128,436 memory bytes, 9 read entries, 5 write entries.
@@ -53,6 +55,67 @@ const WITHDRAW_MANY_20_CPU_CEILING: u64 = 12_000_000;
 const WITHDRAW_MANY_20_MEM_CEILING: u64 = 4_500_000;
 const WITHDRAW_MANY_20_READ_ENTRIES_CEILING: u32 = 60;
 const WITHDRAW_MANY_20_WRITE_ENTRIES_CEILING: u32 = 50;
+
+/// Ceiling limits for `create_streams` at the maximum batch size (20 entries).
+/// Measured: ~1,696,805 CPU instructions, ~754,188 memory bytes, 28 read entries, 24 write entries.
+const CREATE_STREAMS_20_CPU_CEILING: u64 = 2_200_000;
+const CREATE_STREAMS_20_MEM_CEILING: u64 = 1_000_000;
+const CREATE_STREAMS_20_READ_ENTRIES_CEILING: u32 = 35;
+const CREATE_STREAMS_20_WRITE_ENTRIES_CEILING: u32 = 30;
+
+#[test]
+fn create_streams_batch_20_resource_budget_stays_within_ceiling() {
+    let t = StreamTest::setup(20_000);
+    t.set_time(START);
+
+    let mut entries = Vec::new(&t.env);
+    for _ in 0..20 {
+        entries.push_back(StreamInput {
+            recipient: Address::generate(&t.env),
+            total_amount: 1_000,
+            start_time: START,
+            end_time: END,
+            cliff_time: START,
+        });
+    }
+
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let ids = t
+        .contract
+        .create_streams(&t.sender, &t.token_address, &entries);
+    assert_eq!(ids.len(), 20);
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= CREATE_STREAMS_20_CPU_CEILING,
+        "create_streams(20) CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        CREATE_STREAMS_20_CPU_CEILING
+    );
+    assert!(
+        mem <= CREATE_STREAMS_20_MEM_CEILING,
+        "create_streams(20) memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        CREATE_STREAMS_20_MEM_CEILING
+    );
+    assert!(
+        total_reads <= CREATE_STREAMS_20_READ_ENTRIES_CEILING,
+        "create_streams(20) read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        CREATE_STREAMS_20_READ_ENTRIES_CEILING
+    );
+    assert!(
+        res.write_entries <= CREATE_STREAMS_20_WRITE_ENTRIES_CEILING,
+        "create_streams(20) write entries exceeded ceiling: measured {}, ceiling {}",
+        res.write_entries,
+        CREATE_STREAMS_20_WRITE_ENTRIES_CEILING
+    );
+}
 
 #[test]
 fn create_stream_resource_budget_stays_within_ceiling() {

@@ -621,7 +621,8 @@ reassigned.
 | 11   | `StreamWindowInPast`      | `end_time` is not in the future at stream creation — the window would be entirely in the past, making the stream 100 % vested immediately (use a direct token transfer instead).                                  |
 | 12   | `StreamCountExhausted`    | The stream id counter has reached `u64::MAX` and cannot increment further without wrapping (which would overwrite existing streams). No further streams can be created on this contract instance.                 |
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
-| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request.                                                                                             |
+| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request, or `create_streams` is called with more than 20 entries.                                                                     |
+| 15   | `EmptyBatch`             | `create_streams` is called with no entries.                                                                                                                                                                        |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as
@@ -1228,6 +1229,7 @@ measured resource consumption in the local test environment using Soroban SDK
 | Entry point | CPU instructions | Memory (bytes) | Read entries | Write entries | Operations & Footprint |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
+| `create_streams` (20 entries) | ~1,696,805 | ~754,188 | 28 | 24 | One sender authorization and one token transfer for the whole batch; writes 20 streams and emits 20 `Created` events |
 | `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
 | `withdraw_many` (20 ids) | ~5,672,659 | ~1,347,808 | 27 | 23 | One token transfer and `Withdrawn` event per positive stream payout |
 | `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |

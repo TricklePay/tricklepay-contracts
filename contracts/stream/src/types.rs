@@ -24,6 +24,26 @@ pub struct Stream {
     pub cancelled: bool,
 }
 
+/// One entry in a [`StreamContract::create_streams`](crate::StreamContract::create_streams)
+/// batch.
+///
+/// A batch shares a single `sender` and `token`; each entry supplies its own
+/// recipient, amount, and schedule.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamInput {
+    /// Account that accrues and withdraws this stream's tokens.
+    pub recipient: Address,
+    /// Amount available for vesting in the token's smallest unit.
+    pub total_amount: i128,
+    /// Unix timestamp in seconds at which vesting begins.
+    pub start_time: u64,
+    /// Unix timestamp in seconds at which the stream is fully vested.
+    pub end_time: u64,
+    /// Unix timestamp in seconds before which withdrawals are unavailable.
+    pub cliff_time: u64,
+}
+
 impl Stream {
     /// Returns the amount vested at `now`.
     pub fn vested_amount(&self, now: u64) -> i128 {
