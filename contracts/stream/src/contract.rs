@@ -124,7 +124,8 @@ impl StreamContract {
         // end_time has already passed would be 100 % vested on creation —
         // effectively an immediate transfer with extra ceremony. Callers who
         // genuinely need that should use a token transfer directly.
-        if end_time <= env.ledger().timestamp() {
+        let created_at = env.ledger().timestamp();
+        if end_time <= created_at {
             return Err(StreamError::StreamWindowInPast);
         }
 
@@ -154,6 +155,7 @@ impl StreamContract {
             end_time,
             cliff_time,
             cancelled: false,
+            created_at,
         };
         storage::set_stream(&env, id, &stream);
         storage::set_stream_count(&env, next_id);
@@ -281,6 +283,7 @@ impl StreamContract {
                 end_time: entry.end_time,
                 cliff_time: entry.cliff_time,
                 cancelled: false,
+                created_at: now,
             };
             storage::set_stream(&env, id, &stream);
             events::publish_created(&env, id, &stream);

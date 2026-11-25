@@ -160,6 +160,7 @@ fn created_event_topics_index_sender_and_recipient() {
             start_time: 100,
             end_time: 1_100,
             cliff_time: 400,
+            created_at: 100,
         }
         .to_xdr(&t.env, &t.contract.address),
     );
@@ -243,6 +244,7 @@ fn lifecycle_events_carry_the_acting_party() {
             start_time: 100,
             end_time: 1_100,
             cliff_time: 100,
+            created_at: 100,
         }
         .to_xdr(&t.env, &t.contract.address),
     );

@@ -1007,6 +1007,7 @@ Emitted by `create_stream` when a new stream is opened successfully.
 | `start_time`   | data  | `u64`     | Unix timestamp (seconds) when vesting begins                                                               |
 | `end_time`     | data  | `u64`     | Unix timestamp (seconds) when the stream is fully vested                                                   |
 | `cliff_time`   | data  | `u64`     | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
+| `created_at`   | data  | `u64`     | Ledger timestamp (seconds) when the stream was created                                                     |
 
 Indexers can subscribe on the `sender` or `recipient` topics to receive all
 streams for a given address without scanning every event.
@@ -1526,6 +1527,7 @@ console.log('Stream record:', {
   end_time: stream.end_time,         // bigint
   cliff_time: stream.cliff_time,     // bigint
   cancelled: stream.cancelled,       // boolean
+  created_at: stream.created_at,     // bigint
 });
 ```
 
@@ -1711,6 +1713,7 @@ async function fetchCreatedEvents(server, contractId, startLedger) {
       startTime: data.start_time,    // bigint (u64)
       endTime: data.end_time,        // bigint (u64)
       cliffTime: data.cliff_time,    // bigint (u64)
+      createdAt: data.created_at,    // bigint (u64)
     };
   });
 

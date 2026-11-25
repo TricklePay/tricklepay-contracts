@@ -22,6 +22,12 @@ pub struct Stream {
     pub cliff_time: u64,
     /// Whether the sender has cancelled the stream.
     pub cancelled: bool,
+    /// Unix timestamp in seconds at which the stream was created.
+    ///
+    /// Taken from the ledger clock when the creation transaction ran, so the
+    /// record is self-describing and streams that share a `start_time` can be
+    /// ordered by creation.
+    pub created_at: u64,
 }
 
 /// One entry in a [`StreamContract::create_streams`](crate::StreamContract::create_streams)

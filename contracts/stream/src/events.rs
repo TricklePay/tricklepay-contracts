@@ -18,6 +18,7 @@ pub struct Created {
     pub start_time: u64,
     pub end_time: u64,
     pub cliff_time: u64,
+    pub created_at: u64,
 }
 
 /// Emitted when a recipient withdraws vested tokens.
@@ -66,6 +67,7 @@ pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
         start_time: stream.start_time,
         end_time: stream.end_time,
         cliff_time: stream.cliff_time,
+        created_at: stream.created_at,
     }
     .publish(env);
 }

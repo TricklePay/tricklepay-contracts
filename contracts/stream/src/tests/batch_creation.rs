@@ -79,17 +79,20 @@ fn create_streams_stores_each_entry_and_moves_the_total_once() {
     assert_eq!(first.start_time, START);
     assert_eq!(first.end_time, END);
     assert_eq!(first.cliff_time, START);
+    assert_eq!(first.created_at, START);
 
     let second_stream = t.contract.get_stream(&1);
     assert_eq!(second_stream.recipient, second);
     assert_eq!(second_stream.total_amount, 1_500);
     assert_eq!(second_stream.cliff_time, 400);
+    assert_eq!(second_stream.created_at, START);
 
     let third_stream = t.contract.get_stream(&2);
     assert_eq!(third_stream.recipient, third);
     assert_eq!(third_stream.total_amount, 500);
     assert_eq!(third_stream.start_time, 200);
     assert_eq!(third_stream.end_time, 700);
+    assert_eq!(third_stream.created_at, START);
 }
 
 /// The batch works at exactly `MAX_BATCH_SIZE` entries, allocating ids

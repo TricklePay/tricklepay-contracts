@@ -837,6 +837,7 @@ fn stream_created_at_current_ledger_time_vests_from_zero() {
     assert_eq!(t.contract.withdrawable(&id), 0);
     assert_eq!(t.contract.progress(&id), 0);
     assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
+    assert_eq!(t.contract.get_stream(&id).created_at, start);
     assert_eq!(t.token.balance(&t.contract.address), 1_000);
 }
 

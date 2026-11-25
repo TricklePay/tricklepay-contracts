@@ -34,6 +34,7 @@ use crate::types::{Stream, StreamStatus};
 ///     end_time: 1_100,
 ///     cliff_time: 100,
 ///     cancelled: false,
+///     created_at: 100,
 /// };
 ///
 /// assert_eq!(stream_status(&stream, 50), StreamStatus::Pending);
@@ -72,6 +73,7 @@ mod tests {
             end_time: 1_100,
             cliff_time: 100,
             cancelled,
+            created_at: 100,
         }
     }
 
@@ -187,6 +189,7 @@ mod proptests {
             end_time,
             cliff_time: start_time,
             cancelled,
+            created_at: start_time,
         }
     }
 
