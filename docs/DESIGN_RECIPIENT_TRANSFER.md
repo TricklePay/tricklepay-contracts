@@ -1,6 +1,6 @@
 # Design: Transferring the Right to Receive a Stream
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Related Issues:** #456  
 **Author:** Design Team  
 **Date:** 2026-10-20

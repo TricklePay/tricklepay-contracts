@@ -1059,6 +1059,21 @@ Emitted by `topup_stream` when a sender deposits additional tokens into an exist
 | `new_total_amount` | data  | `i128`    | New cumulative total tokens locked in the stream           |
 | `new_end_time`     | data  | `u64`     | Stream end time (preserved under rate increase model)      |
 
+### `RecipientTransferred`
+
+Emitted by `transfer_recipient` after a stream's current recipient replaces
+the old recipient. No tokens move.
+
+| Field           | Kind  | Type      | Description                                             |
+| --------------- | ----- | --------- | ------------------------------------------------------- |
+| `old_recipient` | topic | `Address` | The recipient who gave up withdrawal rights             |
+| `new_recipient` | topic | `Address` | The recipient who gained withdrawal rights              |
+| `stream_id`     | data  | `u64`     | The stream whose recipient changed                      |
+
+Indexers must update the current recipient mapping for `stream_id` after
+every `RecipientTransferred` event. The old recipient loses withdrawal
+authorization immediately, while the sender's cancellation rights are unchanged.
+
 ### RPC getEvents filter examples
 
 The Soroban RPC `getEvents` method allows off-chain indexers and user interfaces

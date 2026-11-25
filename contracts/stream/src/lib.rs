@@ -32,6 +32,7 @@
 //!
 //! - **Stream Lifecycle**:
 //!   - [`StreamContract::create_stream`]: Open a new token stream with schedule & cliff parameters.
+//!   - [`StreamContract::transfer_recipient`]: Reassign a stream's receiving rights to a new address.
 //!   - [`StreamContract::topup_stream`]: Deposit additional tokens into an existing active or pending stream.
 //!   - [`StreamContract::cancel_preview`]: Preview the settlement for a cancellation.
 //!   - [`StreamContract::withdraw`]: Pull all currently withdrawable vested tokens.

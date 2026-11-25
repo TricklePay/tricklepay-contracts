@@ -148,6 +148,7 @@ fn interface_snapshot_lists_every_public_entry_point() {
                 "cliff_time",
             ],
         ),
+        ("transfer_recipient", &["env", "id", "new_recipient"]),
         ("withdraw", &["env", "id"]),
         ("withdraw_many", &["env", "ids"]),
         ("withdraw_amount", &["env", "id", "amount"]),

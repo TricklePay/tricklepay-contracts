@@ -63,8 +63,13 @@ pub trait Contract {
         env: soroban_sdk::Env,
         ids: soroban_sdk::Vec<u64>,
     ) -> Result<soroban_sdk::Vec<i128>, StreamError>;
+    fn transfer_recipient(
+        env: soroban_sdk::Env,
+        id: u64,
+        new_recipient: soroban_sdk::Address,
+    ) -> Result<(), StreamError>;
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Stream {
     pub cancelled: bool,
@@ -78,7 +83,7 @@ pub struct Stream {
     pub total_amount: i128,
     pub withdrawn: i128,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct StreamInput {
     pub cliff_time: u64,
@@ -87,13 +92,13 @@ pub struct StreamInput {
     pub start_time: u64,
     pub total_amount: i128,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Settlement {
     pub recipient_remaining: i128,
     pub refund: i128,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum StreamStatus {
     Pending,
@@ -101,13 +106,13 @@ pub enum StreamStatus {
     Completed,
     Cancelled,
 }
-#[soroban_sdk::contracttype]
+#[soroban_sdk::contracttype(export = false)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DataKey {
     StreamCount,
     Stream(u64),
 }
-#[soroban_sdk::contracterror]
+#[soroban_sdk::contracterror(export = false)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum StreamError {
     StreamNotFound = 1,
@@ -125,7 +130,7 @@ pub enum StreamError {
     BatchTooLarge = 14,
     EmptyBatch = 15,
 }
-#[soroban_sdk::contractevent(topics = ["created"])]
+#[soroban_sdk::contractevent(export = false, topics = ["created"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Created {
     #[topic]
@@ -140,7 +145,7 @@ pub struct Created {
     pub cliff_time: u64,
     pub created_at: u64,
 }
-#[soroban_sdk::contractevent(topics = ["topped_up"])]
+#[soroban_sdk::contractevent(export = false, topics = ["topped_up"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ToppedUp {
     #[topic]
@@ -150,7 +155,7 @@ pub struct ToppedUp {
     pub new_total_amount: i128,
     pub new_end_time: u64,
 }
-#[soroban_sdk::contractevent(topics = ["cancelled"])]
+#[soroban_sdk::contractevent(export = false, topics = ["cancelled"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Cancelled {
     #[topic]
@@ -159,7 +164,7 @@ pub struct Cancelled {
     pub recipient_amount: i128,
     pub sender_refund: i128,
 }
-#[soroban_sdk::contractevent(topics = ["withdrawn"])]
+#[soroban_sdk::contractevent(export = false, topics = ["withdrawn"])]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Withdrawn {
     #[topic]
@@ -167,5 +172,14 @@ pub struct Withdrawn {
     pub id: u64,
     pub amount: i128,
     pub destination: soroban_sdk::Address,
+}
+#[soroban_sdk::contractevent(export = false, topics = ["recipient_transferred"])]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RecipientTransferred {
+    #[topic]
+    pub old_recipient: soroban_sdk::Address,
+    #[topic]
+    pub new_recipient: soroban_sdk::Address,
+    pub stream_id: u64,
 }
 

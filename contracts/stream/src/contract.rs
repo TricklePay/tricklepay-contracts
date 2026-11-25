@@ -295,6 +295,52 @@ impl StreamContract {
         Ok(ids)
     }
 
+    /// Transfer the right to receive this stream to `new_recipient`.
+    ///
+    /// Only the current recipient may call this. The new recipient gains all
+    /// rights to withdraw vested amounts; the old recipient loses them
+    /// immediately. The vesting schedule, `total_amount`, and `withdrawn`
+    /// balance are unchanged, and no tokens move. The sender's cancellation
+    /// rights and refund destination are unaffected.
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Validation order
+    ///
+    /// The stream is loaded from storage first. If `id` does not exist, this
+    /// returns [`StreamError::StreamNotFound`] before any authorization check,
+    /// so an unknown id can be distinguished without recipient authorization.
+    /// For an existing stream the checks then run in this order:
+    ///
+    /// 1. The stream's current `recipient` must authorize the call.
+    /// 2. [`StreamError::InvalidParticipant`] if `new_recipient` is this
+    ///    contract's own address.
+    /// 3. [`StreamError::InvalidParticipant`] if `new_recipient` equals the
+    ///    current recipient — a no-op transfer is rejected rather than
+    ///    silently succeeding.
+    ///
+    /// Transferring the stream to the sender is allowed.
+    pub fn transfer_recipient(
+        env: Env,
+        id: u64,
+        new_recipient: Address,
+    ) -> Result<(), StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        if new_recipient == env.current_contract_address() || new_recipient == stream.recipient {
+            return Err(StreamError::InvalidParticipant);
+        }
+
+        let old_recipient = stream.recipient.clone();
+        stream.recipient = new_recipient.clone();
+        storage::set_stream(&env, id, &stream);
+
+        events::publish_recipient_transferred(&env, &old_recipient, &new_recipient, id);
+
+        Ok(())
+    }
+
     /// Transfers the recipient's full withdrawable balance and returns the amount.
     pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
         withdraw_with(&env, id, |available| {

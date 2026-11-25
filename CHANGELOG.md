@@ -51,6 +51,12 @@ contract.
 
 ### Added
 
+- **ABI:** Added `transfer_recipient(id, new_recipient) -> ()`, allowing the
+  current recipient to assign withdrawal rights to another address.
+- **ABI:** Added `RecipientTransferred` event with indexed `old_recipient` and
+  `new_recipient` topics and `stream_id` in the data payload.
+- **non-ABI:** Accepted `docs/DESIGN_RECIPIENT_TRANSFER.md`, recording transfer
+  authorization, validation, escrow, cancellation, and indexer decisions.
 - **ABI:** Added `created_at: u64` to the `Stream` struct and the `Created` event
   payload, recording the ledger timestamp at which the stream was created.
   **Migration note:** regenerate generated clients and update event decoders;
