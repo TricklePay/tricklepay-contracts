@@ -680,7 +680,7 @@ existing stream.
 
 ## ADR: Only `create_stream` Extends the Instance TTL
 
-**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl)
+**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topupstream-extend-the-instance-ttl)
 
 ### Context
 
