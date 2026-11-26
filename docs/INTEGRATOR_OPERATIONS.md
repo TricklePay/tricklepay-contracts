@@ -359,6 +359,19 @@ Calling `topup_stream(id, added_amount)` increases `stream.total_amount` on-chai
 - **Authorization & zero-payout streams:** Every distinct `recipient` across `ids` must authorize the call. Streams in the batch with `0` withdrawable balance are skipped (recording `0` in their output slot and emitting no `Withdrawn` event); if no stream in the batch pays out a positive amount, the whole call fails with `StreamError::NothingToWithdraw`.
 - **Events:** Emits **one `Withdrawn` event per paid stream** (each with `destination == stream.recipient`), paired with one token transfer per paid stream.
 
+## Storage TTL and Archived Entries
+
+Stream entries and the contract instance expire after `ENTRY_TTL` (≈ 30 days at 5-second ledger close) without access. Individual view functions like `get_stream(id)` extend TTL automatically when accessed within `BUMP_THRESHOLD` (≈ 6 days before expiry), but batch reads (`get_streams`) and preview functions (`cancel_preview`) do not extend TTL by design.
+
+**Archived entries must be restored off-chain** before the contract can use them again. See [TTL_RESTORE.md](TTL_RESTORE.md) for the full restore walkthrough with Stellar CLI commands for testnet and mainnet, including:
+- How to restore the contract instance (`StreamCount` counter)
+- How to restore individual stream entries by ID
+- Ledger key forms for both entry types
+- How to confirm the restore worked
+- How to extend TTL after restore
+
+Integrators should monitor stream TTLs and restore archived entries proactively if participants need access to old streams.
+
 ## Withdrawing Before Anything Has Vested
 
 `withdraw` is not a no-op when there is nothing to claim: it returns

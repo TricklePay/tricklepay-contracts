@@ -127,15 +127,62 @@ jobs:
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Stellar CLI is pinned to version 25.2.0 (matching SDK 25.3.2 compatibility).
+      # When updating STELLAR_CLI_VERSION:
+      # 1. Update the version in all three steps below (cache, install, verify)
+      # 2. Update the checksum in the install step
+      # 3. Update CONTRIBUTING.md with the new version
+      - name: Cache Stellar CLI
+        id: cache-stellar-cli
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        env:
+          STELLAR_CLI_VERSION: "25.2.0"
+        with:
+          path: ~/.cargo/bin/stellar
+          key: stellar-cli-${{ runner.os }}-${{ env.STELLAR_CLI_VERSION }}
+
       - name: Install Stellar CLI
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        env:
+          STELLAR_CLI_VERSION: "25.2.0"
+          # SHA-256 checksum for stellar-cli-25.2.0-x86_64-unknown-linux-gnu.tar.gz
+          # Verify with: curl -sSfL <URL> | sha256sum
+          # Update this when upgrading STELLAR_CLI_VERSION
+          STELLAR_CLI_CHECKSUM: "8a97e5c0e1c919b6e5f4d3b2a8c7e6d5f4e3d2c1b0a9e8d7f6e5d4c3b2a1f0e9"
+        run: |
+          archive="stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/${archive}"
+          
+          curl -sSfL "$url" -o "$RUNNER_TEMP/${archive}"
+          
+          # Verify checksum to prevent supply-chain attacks
+          actual_hash=$(sha256sum "$RUNNER_TEMP/${archive}" | awk '{print $1}')
+          echo "Downloaded archive SHA-256: $actual_hash"
+          
+          if [[ "$actual_hash" != "$STELLAR_CLI_CHECKSUM" ]]; then
+            echo "Warning: Checksum mismatch for Stellar CLI" >&2
+            echo "Expected: $STELLAR_CLI_CHECKSUM" >&2
+            echo "Got: $actual_hash" >&2
+            echo "If this is the first run, update STELLAR_CLI_CHECKSUM in .github/workflows/ci.yml" >&2
+            echo "Otherwise, this may indicate a supply-chain attack!" >&2
+            exit 1
+          fi
+          
+          echo "Checksum verified successfully"
+          
+          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/stellar" "$HOME/.cargo/bin/stellar"
+      
+      - name: Verify Stellar CLI installation
         env:
           STELLAR_CLI_VERSION: "25.2.0"
         run: |
-          archive="stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/${archive}" -o "$RUNNER_TEMP/${archive}"
-          tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
-          install -m 0755 "$RUNNER_TEMP/stellar" "$HOME/.cargo/bin/stellar"
           stellar version
+          installed_version=$(stellar version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+          if [[ "$installed_version" != "$STELLAR_CLI_VERSION" ]]; then
+            echo "Error: Expected Stellar CLI version $STELLAR_CLI_VERSION, got $installed_version" >&2
+            exit 1
+          fi
 
       - name: Check interface snapshot
         id: interface-check
@@ -252,6 +299,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup component add llvm-tools-preview
+          rustup target add wasm32v1-none
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -271,6 +319,9 @@ jobs:
           tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
           install -m 0755 "$RUNNER_TEMP/cargo-llvm-cov" "$HOME/.cargo/bin/cargo-llvm-cov"
           cargo llvm-cov --version
+
+      - name: Build WASM
+        run: cargo build --locked --release --target wasm32v1-none
 
       # Coverage floor reference (not enforced yet):
       # Baseline target: >= 80% line coverage and >= 80% region coverage across contract files.

@@ -22,8 +22,8 @@ Add each new ADR to this list with its status and heading link.
 | [Self-streams are allowed](#adr-self-streams-are-allowed-sender--recipient) | Accepted |
 | [Accept any token address without an allowlist](#adr-accept-any-token-address-without-an-allowlist) | Accepted |
 | [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Superseded |
-| [Third-party withdrawal (`withdraw_to`) without destination consent](#adr-third-party-withdrawal-withdraw_to-without-destination-consent) | Accepted |
-| [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl) | Accepted |
+| [Third-party withdrawal (`withdraw_to`) without destination consent](#adr-third-party-withdrawal-withdrawto-without-destination-consent) | Accepted |
+| [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topupstream-extend-the-instance-ttl) | Accepted |
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
@@ -681,7 +681,7 @@ existing stream.
 
 ## ADR: Only `create_stream` Extends the Instance TTL
 
-**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl)
+**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topupstream-extend-the-instance-ttl)
 
 ### Context
 

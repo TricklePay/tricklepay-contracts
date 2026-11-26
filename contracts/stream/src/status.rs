@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Pure lifecycle status derivation.
 //!
 //! [`stream_status`] reads only a stream's own fields and the timestamp it is
