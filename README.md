@@ -103,6 +103,11 @@ A stream is defined by a total amount and a window of time:
   instead and transfers exactly that, up to the same balance; whatever is left
   stays in the stream and keeps growing as more vests. The two can be mixed
   freely — draw a fixed sum each month, then sweep the remainder at the end.
+  `withdraw_to(id, destination, amount)` works like `withdraw_amount` but sends
+  the tokens directly to `destination` instead of the stream's `recipient`;
+  only the `recipient` authorizes the call, and `destination` may be any
+  address except the stream contract itself (which is rejected with
+  `InvalidParticipant`).
   `withdraw_many(ids)` pays multiple streams in one call, including streams
   with different recipients (each distinct recipient authorizes once). Each
   stream with a positive balance is transferred and emits its own event;
@@ -163,6 +168,36 @@ sequenceDiagram
     deactivate StreamContract
 ```
 
+#### Third-party withdrawal (`withdraw_to`)
+
+`withdraw_to(id, destination, amount)` lets the stream's `recipient` route vested tokens directly to any `destination` address (such as a cold wallet, vendor, or smart contract) in a single call:
+
+- **Authorization:** Only the stream's `recipient` authorizes the call; `destination` does not need to sign or approve the transfer.
+- **Destination rule:** `destination` cannot be the stream contract's own address (rejected with `InvalidParticipant`). Passing `destination == recipient` is permitted and behaves identically to `withdraw_amount`.
+- **Errors:** Returns `StreamNotFound` if `id` does not exist, `InvalidAmount` if `amount <= 0`, `InvalidParticipant` if `destination` is the contract's own address, and `InsufficientBalance` if `amount` exceeds the current withdrawable balance.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Recipient
+    participant StreamContract as Stream Contract
+    participant TokenContract as Token Contract
+    actor Destination
+
+    Recipient->>StreamContract: withdraw_to(id, destination, amount)
+    activate StreamContract
+    StreamContract->>StreamContract: require recipient auth; validate amount > 0 & destination != contract
+    StreamContract->>StreamContract: check amount <= withdrawable balance & update withdrawn
+    StreamContract->>TokenContract: transfer(from: stream_contract, to: destination, amount)
+    activate TokenContract
+    TokenContract-->>Destination: credit amount
+    TokenContract-->>StreamContract: ok
+    deactivate TokenContract
+    StreamContract-->>Recipient: emit Withdrawn(recipient, id, amount, destination)
+    StreamContract-->>Recipient: return amount transferred (i128)
+    deactivate StreamContract
+```
+
 #### Stream cancellation (`cancel`)
 
 ```mermaid
@@ -205,11 +240,18 @@ sequenceDiagram
     activate TokenContract
     TokenContract-->>StreamContract: ok
     deactivate TokenContract
-    StreamContract->>StreamContract: total_amount += added_amount (rate increases)
+    StreamContract->>StreamContract: total_amount += added_amount (recomputes vested over elapsed)
     StreamContract-->>Sender: emit ToppedUp(sender, id, added_amount, new_total, end_time)
     StreamContract-->>Sender: return ok
     deactivate StreamContract
 ```
+
+`topup_stream` raises `total_amount` while keeping `start_time`, `end_time`, and `cliff_time` unchanged, so the vested amount is recomputed over the entire elapsed time since `start_time`. Once the cliff has passed, topping up causes the vested amount to jump retroactively in the same ledger by `added_amount * elapsed / duration` (subject to integer division rounding).
+
+For example, take a stream of `1,000` tokens over `1,000` seconds (`start_time = 100`, `end_time = 1100`, `cliff_time = 100`) topped up by `1,000` tokens at the midpoint (`now = 600`, `elapsed = 500`):
+
+- **Before top-up:** `total_amount = 1,000`, `vested = 500`, `withdrawable = 500`, `locked = 500`.
+- **After top-up (`+1,000`):** `total_amount = 2,000`, `vested = 1,000` (`500 + 1,000 * 500 / 1,000`), `withdrawable = 1,000`, `locked = 1,000`.
 
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
@@ -897,7 +939,7 @@ When a stream is created, the **entire `total_amount` is transferred from the se
 
 1. **Trustless guarantee for the recipient:** The recipient is guaranteed that the tokens exist and are locked in the contract for the duration of the stream. There is no risk that the sender will fail to pay, run out of funds, or renege on the agreement. The vested amount is always claimable, regardless of what the sender does afterward.
 
-2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding, top-ups, or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created, so the vesting logic is purely time-based arithmetic with no external dependencies.
+2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created—and any top-up deposits the added amount in full before `total_amount` changes—so the vesting logic is purely time-based arithmetic with no external dependencies.
 
 3. **Enables cancellation refunds:** The sender can cancel a stream and immediately receive the unvested remainder back. This is only possible because the full amount is already in the contract — there is no need to track or enforce future payments.
 
@@ -975,6 +1017,15 @@ contract and run to completion or are cancelled there, while new streams are
 created on the new one. Integrators must point clients at the new contract ID.
 See [docs/INTEGRATOR_OPERATIONS.md](docs/INTEGRATOR_OPERATIONS.md) and
 [THREAT_MODEL.md § Immutability](THREAT_MODEL.md#immutability).
+
+## Known limitations
+
+- **No pause or admin:** The contract has no admin key, freeze, or emergency-stop mechanism, so running streams cannot be paused or overridden by a privileged party ([ADR: No Pause, Freeze, or Emergency-Stop Mechanism](docs/DECISIONS.md#adr-no-pause-freeze-or-emergency-stop-mechanism)).
+- **Tokens must be fee-free and non-reentrant:** The contract accepts any SEP-41 token without an allowlist and assumes transfers neither charge fees, rebase, nor re-enter the contract ([THREAT_MODEL.md § Trust assumptions about the token contract](THREAT_MODEL.md#trust-assumptions-about-the-token-contract)).
+- **Timestamps are seconds with no magnitude check:** `start_time`, `end_time`, and `cliff_time` are read as `u64` Unix seconds without bounds validation, so passing milliseconds creates a stream far in the future ([ADR: Do Not Bound Timestamp Magnitude](docs/ADR_TIMESTAMP_MAGNITUDE.md)).
+- **Batch reads are capped at 20:** `get_streams` (and `withdraw_many` / `withdrawable_many`) accept at most 20 stream IDs per call to stay within Soroban ledger resource limits ([THREAT_MODEL.md § Batch reads and cancellation previews](THREAT_MODEL.md#batch-reads-and-cancellation-previews)).
+- **Archived entries need restoring:** Stream records and instance storage expire when their Soroban TTL lapses and must be restored on-chain before calls can read or mutate them ([THREAT_MODEL.md § Storage lifetime and archival](THREAT_MODEL.md#storage-lifetime-and-archival)).
+- **Not upgradeable:** The contract is immutable with no proxy or WASM upgrade path, so fixes or new features require deploying a new contract address ([docs/INTEGRATOR_OPERATIONS.md § Redeployment Without Upgradeability](docs/INTEGRATOR_OPERATIONS.md#redeployment-without-upgradeability)).
 
 ## Events
 
@@ -1231,8 +1282,11 @@ measured resource consumption in the local test environment using Soroban SDK
 | `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
 | `withdraw_many` (20 ids) | ~5,672,659 | ~1,347,808 | 27 | 23 | One token transfer and `Withdrawn` event per positive stream payout |
 | `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
+| `topup_stream` | ~330,000 | ~126,000 | 8 | 4 | Reads & updates stream total; extends instance & stream TTL; executes token deposit transfer |
 | `get_streams` (1 id) | ~65,457 | ~35,165 | 2 | 0 | Strictly read-only; reads instance & single stream; no state writes or TTL extensions |
 | `get_streams` (20 ids) | ~976,203 | ~529,963 | 21 | 0 | Strictly read-only; reads instance & 20 streams; resource usage scales linearly with batch size |
+| `cancel_preview` | ~66,000 | ~35,500 | 2 | 0 | Strictly read-only; reads instance & single stream; computes settlement preview without state writes |
+| `withdrawable_many` (20 ids) | ~1,050,000 | ~530,000 | 21 | 0 | Strictly read-only; reads instance & 20 streams; computes withdrawable balances linearly |
 | `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
 | `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
 

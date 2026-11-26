@@ -21,7 +21,9 @@ Add each new ADR to this list with its status and heading link.
 | [Full escrow at stream creation](#adr-full-escrow-at-stream-creation) | Accepted |
 | [Self-streams are allowed](#adr-self-streams-are-allowed-sender--recipient) | Accepted |
 | [Accept any token address without an allowlist](#adr-accept-any-token-address-without-an-allowlist) | Accepted |
-| [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Accepted |
+| [Only `create_stream` extends the instance TTL](#adr-only-createstream-extends-the-instance-ttl) | Superseded |
+| [Third-party withdrawal (`withdraw_to`) without destination consent](#adr-third-party-withdrawal-withdraw_to-without-destination-consent) | Accepted |
+| [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl) | Accepted |
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
@@ -679,7 +681,7 @@ existing stream.
 
 ## ADR: Only `create_stream` Extends the Instance TTL
 
-**Status:** Accepted
+**Status:** Superseded by [Only `create_stream` and `topup_stream` extend the instance TTL](#adr-only-createstream-and-topup_stream-extend-the-instance-ttl)
 
 ### Context
 
@@ -855,5 +857,135 @@ Additionally:
 - [contracts/stream/src/tests/topup.rs](../contracts/stream/src/tests/topup.rs) —
   unit and integration tests for `topup_stream`.
 
+## ADR: Third-party withdrawal (`withdraw_to`) without destination consent
+
+**Status:** Accepted
+
+### Context
+
+`withdraw` and `withdraw_amount` always transfer vested tokens to the stream's
+stored `recipient` address. Recipients who manage streams from a hot wallet but
+custody funds in a cold wallet, or who want to route payouts directly to a
+vendor, multisig, or smart contract, would otherwise need a two-step workflow
+(`withdraw` followed by `token.transfer`), incurring an extra transaction and
+temporary custody at the `recipient` address.
+
+`withdraw_to(id, destination, amount)` (evaluated in
+[DESIGN_WITHDRAW_TO.md](DESIGN_WITHDRAW_TO.md)) introduces direct third-party
+payouts. The key design question is what restrictions apply to `destination` and
+whether `destination` must consent to receive the tokens.
+
+### Decision
+
+`withdraw_to(id, destination, amount)` allows the stream's `recipient` to
+transfer up to the withdrawable balance to any `destination` address **except
+the stream contract's own address** (`env.current_contract_address()`), which
+is rejected with `StreamError::InvalidParticipant`. Passing `destination ==
+stream.recipient` is permitted and behaves identically to `withdraw_amount`.
+
+**Only the stream's `recipient` authorizes the call**
+(`stream.recipient.require_auth()`). The `destination` address is **not**
+required to authorize or consent to the transfer; a third party can be paid
+without its prior approval, matching standard SEP-41 `token.transfer`
+semantics. `stream.withdrawn` is incremented before the token transfer, and the
+`Withdrawn` event records both `recipient` and `destination`.
+
+### Alternatives considered
+
+1. **No `withdraw_to` entry point (two-step `withdraw` + `token.transfer`).**
+   Rejected: forces two transactions, higher fees, and temporary custody at the
+   recipient's address.
+2. **Require `destination` to also authorize (`destination.require_auth()`).**
+   Rejected: dual authorization breaks the single-transaction UX (e.g., cold
+   wallets or external vendors would have to co-sign every withdrawal) and is
+   inconsistent with SEP-41 `token.transfer` and `create_stream`, neither of
+   which requires recipient consent.
+3. **Restrict `destination` further (e.g., reject contract addresses or enforce
+   token trustline checks in the stream contract).** Rejected: smart-contract
+   wallets and multisigs are legitimate destinations, and token-level
+   constraints (such as missing trustlines) are already enforced atomically by
+   the token contract's `transfer` call.
+4. **Emit a separate `WithdrawnTo` event.** Rejected: splitting withdrawal
+   events complicates off-chain indexers compared to including `destination` on
+   the existing `Withdrawn` event.
+
+### Consequences
+
+- Recipients can route payouts to cold wallets, vendors, or contracts in one
+  transaction without exposing those destinations as stream participants.
+- Any non-contract address can receive tokens from a stream without consenting,
+  and passing an incorrect or incompatible `destination` is the recipient's
+  responsibility (the stream's `withdrawn` counter still increases if the token
+  transfer succeeds).
+- Sending tokens to the stream contract itself is prevented on-chain with
+  `StreamError::InvalidParticipant`, avoiding accounting confusion where
+  `withdrawn` increments while tokens remain in contract escrow.
+
+### Related references
+
+- [DESIGN_WITHDRAW_TO.md](DESIGN_WITHDRAW_TO.md) — full design rationale and
+  validation ordering.
+- `contracts/stream/src/contract.rs` (`withdraw_to`) — implementation.
+- `contracts/stream/src/tests/withdrawal.rs` — unit tests covering
+  third-party payouts, recipient-only authorization, and `InvalidParticipant` on
+  the contract's own address.
+
+## ADR: Only `create_stream` and `topup_stream` extend the instance TTL
+
+**Status:** Accepted
+
+### Context
+
+The earlier ADR, [Only `create_stream` extends the instance
+TTL](#adr-only-createstream-extends-the-instance-ttl), recorded that only
+`create_stream` called `storage::extend_instance_ttl`. When `topup_stream` was
+added as a sender-initiated funding entry point, it also called
+`storage::extend_instance_ttl(&env)` (`contracts/stream/src/contract.rs`),
+creating a discrepancy between the ADR, `contracts/stream/src/storage.rs` docs,
+and the test suite (`contracts/stream/src/tests/storage.rs` only pinned
+`withdraw` and `cancel` as non-extending).
+
+### Decision
+
+Only `create_stream` and `topup_stream` extend the instance TTL via
+`storage::extend_instance_ttl`. All other mutating entry points (`withdraw`,
+`withdraw_amount`, `withdraw_to`, `withdraw_many`, `cancel`) and all read-only
+views do **not** extend the instance TTL.
+
+`topup_stream` is a sender-initiated funding operation on an active or pending
+stream. Extending the instance TTL on `topup_stream` keeps the contract
+instance (and `StreamCount`) alive while senders are actively funding streams,
+without imposing instance-bump fees on recipient withdrawals, sender
+cancellations, or view calls.
+
+### Alternatives considered
+
+1. **Remove `extend_instance_ttl` from `topup_stream` so only `create_stream`
+   extends it.** Rejected: changing deployed behavior would alter the TTL
+   guarantees for deployments that top up existing long-running streams
+   regularly without creating new ones, and `topup_stream` is already a
+   sender-funded capital deposit similar to `create_stream`.
+2. **Extend the instance TTL on all mutating entry points.** Rejected for the
+   same reason as in the superseded ADR: high-frequency withdrawals and
+   cancellations do not read `StreamCount` and should not subsidize instance
+   rent.
+
+### Consequences
+
+- Deployments that either create new streams or top up existing streams at least
+  once per `BUMP_THRESHOLD` ledgers keep the instance entry alive.
+- Deployments that see only withdrawals, cancellations, and view calls for
+  longer than `ENTRY_TTL` will still have the instance archived until restored,
+  while existing persistent stream entries remain unaffected.
+
+### Related references
+
+- `contracts/stream/src/contract.rs` (`create_stream`, `topup_stream`) — the
+  two entry points that call `storage::extend_instance_ttl`.
+- `contracts/stream/src/storage.rs` — module-level and `DataKey::StreamCount`
+  documentation describing instance TTL extension.
+- `contracts/stream/src/tests/storage.rs` (`topup_stream_extends_the_instance_ttl`
+  and `withdraw_and_cancel_do_not_extend_the_instance_ttl`) — tests pinning both
+  sides of the policy.
 
   

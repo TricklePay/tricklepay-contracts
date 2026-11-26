@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts test-diff-interface
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts test-diff-interface install-hooks
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -86,6 +86,9 @@ fmt-check: ## Verify formatting without modifying files (used in CI).
 
 lint: ## Lint every target and treat warnings as errors.
 	cargo clippy --locked --all-targets -- -D warnings
+
+install-hooks: ## Install optional Git pre-commit hooks (opt-in).
+	./scripts/install-hooks.sh
 
 .PHONY: lint-scripts
 lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.

@@ -99,6 +99,37 @@ fn stream_error_all_matches_exhaustive_match() {
     );
 }
 
+const CHANGELOG: &str = include_str!("../../../../CHANGELOG.md");
+const CONTRACT_SOURCE: &str = include_str!("../contract.rs");
+
+#[test]
+fn changelog_covers_every_entry_point() {
+    // Extract all public function names from contract.rs
+    let entry_points: std::collections::BTreeSet<String> = CONTRACT_SOURCE
+        .lines()
+        .filter(|line| line.trim().starts_with("pub fn "))
+        .filter_map(|line| {
+            let after_pub_fn = line.trim().strip_prefix("pub fn ")?;
+            let fn_name = after_pub_fn.split('(').next()?.trim();
+            Some(fn_name.to_string())
+        })
+        .collect();
+
+    // Check each entry point is mentioned in the CHANGELOG
+    let mut missing = std::vec::Vec::new();
+    for fn_name in &entry_points {
+        if !CHANGELOG.contains(fn_name) {
+            missing.push(fn_name.clone());
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "CHANGELOG.md is missing the following entry points: {}",
+        missing.join(", ")
+    );
+}
+
 const INTERFACE_SNAPSHOT: &str = include_str!("../../../../docs/interface.txt");
 
 #[test]

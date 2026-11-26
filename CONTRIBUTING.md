@@ -52,6 +52,28 @@ bash ./scripts/check-release-overflow.sh
 
 > **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
 
+### Optional pre-commit hook
+
+An opt-in Git `pre-commit` hook is available in `scripts/hooks/pre-commit` (installed via `scripts/install-hooks.sh`). It is never installed automatically. When staged Rust changes (`.rs`, `Cargo.toml`, or `Cargo.lock`) are present, it runs `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
+
+Install it with:
+
+```bash
+make install-hooks
+```
+
+Skip it for a single commit with `SKIP_PRE_COMMIT_HOOKS=1`:
+
+```bash
+SKIP_PRE_COMMIT_HOOKS=1 git commit -m "..."
+```
+
+Remove it with:
+
+```bash
+git config --unset core.hooksPath
+```
+
 ## Makefile Targets
 
 The repository includes a `Makefile` that automates local development, linting, testing, and deployment checks. Run `make` or `make help` to display a summary of available targets.
@@ -66,6 +88,7 @@ The table below lists every target defined in the `Makefile`, along with its pur
 | `fmt` | Automatically formats all Rust source files in place (`cargo fmt`). | Run during development to enforce consistent code styling. |
 | `fmt-check` | Checks that all Rust code conforms to formatting standards without modifying files (`cargo fmt --check`). | Run in CI and before opening a pull request. |
 | `lint` | Runs Clippy across all targets and denies all warnings (`cargo clippy --all-targets -- -D warnings`). | Run before submitting code changes to catch lint issues. |
+| `install-hooks` | Installs the opt-in Git `pre-commit` hook from `scripts/hooks/`. | Run once if you want `fmt` and `clippy` checked automatically on staged Rust changes. |
 | `lint-scripts` | Validates shell syntax with `bash -n` and lints all scripts in `scripts/` using ShellCheck. | Run whenever modifying or creating scripts in `scripts/`. |
 | `test` | Executes the complete test suite including unit tests and proptest invariant suites (`cargo test`). | Run during development and before submitting any pull request. |
 | `coverage` | Generates source-based test coverage report with per-file metrics (`cargo llvm-cov`). | Run to inspect test coverage across contract modules. |
