@@ -441,7 +441,7 @@ impl StreamContract {
     /// pays a given stream.
     ///
     /// Each positive payout makes one token transfer and emits one
-    /// [`events::Withdrawn`] event. The batch accepts at most
+    /// `Withdrawn` event. The batch accepts at most
     /// [`MAX_BATCH_SIZE`] ids.
     pub fn withdraw_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
         if ids.len() > MAX_BATCH_SIZE {
@@ -744,13 +744,18 @@ impl StreamContract {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
 
-    /// Preview the settlement for cancelling a stream at the current ledger time.
+    /// Preview the settlement for cancelling a stream at a chosen timestamp.
     ///
-    /// Returns the same [`vesting::Settlement`] that [`Self::cancel`] would
-    /// produce now, without requiring authorization, changing storage, or
-    /// publishing events. Returns [`StreamError::StreamNotFound`] for an
-    /// unknown id, [`StreamError::AlreadyCancelled`] for a cancelled stream,
-    /// and [`StreamError::StreamAlreadyCompleted`] when the stream has ended.
+    /// Returns the [`vesting::Settlement`] that [`Self::cancel`] would produce
+    /// at the specified `timestamp`, without requiring authorization, changing
+    /// storage, or publishing events. This allows senders to explore
+    /// cancellation outcomes across the stream's active window before committing
+    /// to a cancellation transaction.
+    ///
+    /// Returns [`StreamError::StreamNotFound`] for an unknown id,
+    /// [`StreamError::AlreadyCancelled`] for a cancelled stream, and
+    /// [`StreamError::StreamAlreadyCompleted`] when the timestamp is at or
+    /// after the stream's end time.
     ///
     /// # Examples
     ///
@@ -761,20 +766,20 @@ impl StreamContract {
     /// # let contract_id = env.register(StreamContract, ());
     /// # let client = StreamContractClient::new(&env, &contract_id);
     /// # let stream_id = 0u64;
-    /// let settlement = client.cancel_preview(&stream_id);
+    /// # let timestamp = 1_000_000u64;
+    /// let settlement = client.cancel_preview(&stream_id, &timestamp);
     /// ```
-    pub fn cancel_preview(env: Env, id: u64) -> Result<vesting::Settlement, StreamError> {
+    pub fn cancel_preview(env: Env, id: u64, timestamp: u64) -> Result<vesting::Settlement, StreamError> {
         let stream = storage::get_stream_readonly(&env, id).ok_or(StreamError::StreamNotFound)?;
         if stream.cancelled {
             return Err(StreamError::AlreadyCancelled);
         }
 
-        let now = env.ledger().timestamp();
-        if now >= stream.end_time {
+        if timestamp >= stream.end_time {
             return Err(StreamError::StreamAlreadyCompleted);
         }
 
-        let vested = stream.vested_amount(now);
+        let vested = stream.vested_amount(timestamp);
         Ok(vesting::settlement(
             stream.total_amount,
             vested,
@@ -882,6 +887,18 @@ impl StreamContract {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         let vested = stream.vested_amount(env.ledger().timestamp());
         Ok((stream.total_amount - vested).max(0))
+    }
+
+    /// Returns seconds until the stream ends, or `StreamNotFound`.
+    ///
+    /// The current time is read from the ledger. Completed and cancelled
+    /// streams return `0`.
+    pub fn remaining_time(env: Env, id: u64) -> Result<u64, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Ok(0);
+        }
+        Ok(stream.end_time.saturating_sub(env.ledger().timestamp()))
     }
 
     /// Vesting progress in basis points, from 0 (nothing vested) to

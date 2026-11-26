@@ -122,7 +122,9 @@ fn withdraw_many_pays_duplicated_id_only_once() {
     let b = t.open_default_stream(2_000);
 
     t.set_time(600);
-    let amounts = t.contract.withdraw_many(&soroban_sdk::vec![&t.env, a, b, a]);
+    let amounts = t
+        .contract
+        .withdraw_many(&soroban_sdk::vec![&t.env, a, b, a]);
     let publishers = t.event_publishers();
 
     assert_eq!(amounts, soroban_sdk::vec![&t.env, 500, 1_000, 0]);

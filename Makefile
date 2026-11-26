@@ -3,7 +3,7 @@
 WASM_TARGET := wasm32v1-none
 WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 
-.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts test-diff-interface
+.PHONY: all check build wasm test fmt fmt-check lint audit clean deploy check-manifest check-markdown-links test-markdown-links snapshot help docs check-release-overflow test-release-overflow test-deployment-scripts test-diff-interface install-hooks
 
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
@@ -12,6 +12,31 @@ WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 # Use this before opening a pull request.
 all check: check-release-overflow check-manifest fmt-check lint test audit
 	./scripts/diff-interface.sh
+
+release-check: ## Verify release readiness: manifest, build locked, hash, and changelog.
+	@set -e; \
+	echo "Checking manifest..."; \
+	cargo metadata --no-deps --locked > /dev/null; \
+	echo "Building with locked dependencies..."; \
+	cargo build --locked --release --target "$(WASM_TARGET)" > /dev/null; \
+	echo "Computing WASM hash..."; \
+	if command -v sha256sum >/dev/null 2>&1; then \
+		hash=$$(sha256sum "$(WASM)" | awk '{print $$1}'); \
+	elif command -v shasum >/dev/null 2>&1; then \
+		hash=$$(shasum -a 256 "$(WASM)" | awk '{print $$1}'); \
+	else \
+		echo "Error: install sha256sum or shasum to compute the WASM SHA-256 hash." >&2; \
+		exit 1; \
+	fi; \
+	printf 'WASM Hash: sha256:%s\n' "$$hash"; \
+	echo "Verifying CHANGELOG has entry for version..."; \
+	version=$$(grep -m 1 '^## \[' CHANGELOG.md | sed 's/## \[//;s/\].*//' | head -1); \
+	if [ -z "$$version" ] || [ "$$version" = "Unreleased" ]; then \
+		echo "Error: CHANGELOG.md must have a release version entry (not [Unreleased])." >&2; \
+		exit 1; \
+	fi; \
+	echo "Release version in CHANGELOG: $$version"; \
+	echo "✓ All release checks passed"
 
 check-release-overflow: ## Verify [profile.release] sets overflow-checks = true in Cargo.toml.
 	./scripts/check-release-overflow.sh
@@ -86,6 +111,9 @@ fmt-check: ## Verify formatting without modifying files (used in CI).
 
 lint: ## Lint every target and treat warnings as errors.
 	cargo clippy --locked --all-targets -- -D warnings
+
+install-hooks: ## Install optional Git pre-commit hooks (opt-in).
+	./scripts/install-hooks.sh
 
 .PHONY: lint-scripts
 lint-scripts: ## Check shell syntax and lint scripts with ShellCheck.

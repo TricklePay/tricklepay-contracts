@@ -337,6 +337,19 @@ The formulas match the contract's on-chain arithmetic exactly:
 
 Recomputing these values client-side costs virtually nothing, allows smooth real-time progress animations, and keeps the dashboard resilient against network latency.
 
+## Storage TTL and Archived Entries
+
+Stream entries and the contract instance expire after `ENTRY_TTL` (≈ 30 days at 5-second ledger close) without access. Individual view functions like `get_stream(id)` extend TTL automatically when accessed within `BUMP_THRESHOLD` (≈ 6 days before expiry), but batch reads (`get_streams`) and preview functions (`cancel_preview`) do not extend TTL by design.
+
+**Archived entries must be restored off-chain** before the contract can use them again. See [TTL_RESTORE.md](TTL_RESTORE.md) for the full restore walkthrough with Stellar CLI commands for testnet and mainnet, including:
+- How to restore the contract instance (`StreamCount` counter)
+- How to restore individual stream entries by ID
+- Ledger key forms for both entry types
+- How to confirm the restore worked
+- How to extend TTL after restore
+
+Integrators should monitor stream TTLs and restore archived entries proactively if participants need access to old streams.
+
 ## Withdrawing Before Anything Has Vested
 
 `withdraw` is not a no-op when there is nothing to claim: it returns

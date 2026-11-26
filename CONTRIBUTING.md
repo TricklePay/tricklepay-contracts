@@ -52,6 +52,28 @@ bash ./scripts/check-release-overflow.sh
 
 > **Tip:** You can use the project's cargo aliases (defined in `.cargo/config.toml`) for shorter commands: `cargo fmt-check`, `cargo lint`, and `cargo test`. These run the exact same checks as the `Makefile` targets.
 
+### Optional pre-commit hook
+
+An opt-in Git `pre-commit` hook is available in `scripts/hooks/pre-commit` (installed via `scripts/install-hooks.sh`). It is never installed automatically. When staged Rust changes (`.rs`, `Cargo.toml`, or `Cargo.lock`) are present, it runs `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
+
+Install it with:
+
+```bash
+make install-hooks
+```
+
+Skip it for a single commit with `SKIP_PRE_COMMIT_HOOKS=1`:
+
+```bash
+SKIP_PRE_COMMIT_HOOKS=1 git commit -m "..."
+```
+
+Remove it with:
+
+```bash
+git config --unset core.hooksPath
+```
+
 ## Makefile Targets
 
 The repository includes a `Makefile` that automates local development, linting, testing, and deployment checks. Run `make` or `make help` to display a summary of available targets.
@@ -66,6 +88,7 @@ The table below lists every target defined in the `Makefile`, along with its pur
 | `fmt` | Automatically formats all Rust source files in place (`cargo fmt`). | Run during development to enforce consistent code styling. |
 | `fmt-check` | Checks that all Rust code conforms to formatting standards without modifying files (`cargo fmt --check`). | Run in CI and before opening a pull request. |
 | `lint` | Runs Clippy across all targets and denies all warnings (`cargo clippy --all-targets -- -D warnings`). | Run before submitting code changes to catch lint issues. |
+| `install-hooks` | Installs the opt-in Git `pre-commit` hook from `scripts/hooks/`. | Run once if you want `fmt` and `clippy` checked automatically on staged Rust changes. |
 | `lint-scripts` | Validates shell syntax with `bash -n` and lints all scripts in `scripts/` using ShellCheck. | Run whenever modifying or creating scripts in `scripts/`. |
 | `test` | Executes the complete test suite including unit tests and proptest invariant suites (`cargo test`). | Run during development and before submitting any pull request. |
 | `coverage` | Generates source-based test coverage report with per-file metrics (`cargo llvm-cov`). | Run to inspect test coverage across contract modules. |
@@ -431,9 +454,7 @@ fixed schedule.
 
 ### Cutting and tagging a release
 
-1. Confirm `main` is green: `make check` (manifest, formatting, lint, tests, audit,
-   markdown link checks, script linting, and interface diff), so the committed
-   `docs/interface.txt` matches a fresh `make wasm` build.
+1. Confirm `main` is green by running the release checks: `make release-check` (manifest, locked build, WASM hash verification, and changelog entry check). This ensures the committed `docs/interface.txt` matches a fresh `make wasm` build.
 2. Pick the version number under
    [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a breaking
    interface change (see
@@ -446,14 +467,12 @@ fixed schedule.
      and open a new, empty `## [Unreleased]` section above it for whatever
      comes next.
    - Bump `version` in the workspace `Cargo.toml` to match.
-   - Run `make wasm-hash` and record its `sha256:` output in the tag
-     annotation — this is the hash anyone can later check a live deployment
-     against (see
-     [Verifying a deployment](README.md#verifying-a-deployment)).
-4. Tag that commit with an annotated tag, `vX.Y.Z`
-   (`git tag -a vX.Y.Z -m "..."`), and push it (`git push origin vX.Y.Z`).
-   The tag is what makes a specific `CHANGELOG.md` entry and a specific,
-   reproducible WASM build addressable by name.
+4. Use `./scripts/release-tag.sh` to verify the release, compute the WASM hash,
+   and draft the release notes with the hash and commit reference. The script
+   refuses to run on a dirty working tree, runs the release checks, and asks for
+   confirmation before creating the annotated tag. The tag includes the full
+   changelog section and WASM hash in its annotation so a tag alone names a
+   reproducible, verifiable build.
 
 ### How a tag relates to a deployed contract
 

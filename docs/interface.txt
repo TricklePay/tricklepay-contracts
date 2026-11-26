@@ -46,13 +46,18 @@ pub trait Contract {
         env: soroban_sdk::Env,
         ids: soroban_sdk::Vec<u64>,
     ) -> Result<soroban_sdk::Vec<i128>, StreamError>;
-    fn cancel_preview(env: soroban_sdk::Env, id: u64) -> Result<Settlement, StreamError>;
+    fn cancel_preview(
+        env: soroban_sdk::Env,
+        id: u64,
+        timestamp: u64,
+    ) -> Result<Settlement, StreamError>;
     fn create_streams(
         env: soroban_sdk::Env,
         sender: soroban_sdk::Address,
         token: soroban_sdk::Address,
         entries: soroban_sdk::Vec<StreamInput>,
     ) -> Result<soroban_sdk::Vec<u64>, StreamError>;
+    fn remaining_time(env: soroban_sdk::Env, id: u64) -> Result<u64, StreamError>;
     fn rate_per_second(env: soroban_sdk::Env, id: u64) -> Result<i128, StreamError>;
     fn withdraw_amount(
         env: soroban_sdk::Env,
