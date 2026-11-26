@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${SKIP_PRE_COMMIT_HOOKS:-0}" = "1" ] || [ "${SKIP_HOOKS:-0}" = "1" ]; then
+    exit 0
+fi
+
+staged_rust="$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' 'Cargo.toml' 'Cargo.lock')"
+if [ -z "$staged_rust" ]; then
+    exit 0
+fi
+
+echo "Running pre-commit Rust checks (skip with SKIP_PRE_COMMIT_HOOKS=1)..."
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings

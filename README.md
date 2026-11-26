@@ -240,11 +240,18 @@ sequenceDiagram
     activate TokenContract
     TokenContract-->>StreamContract: ok
     deactivate TokenContract
-    StreamContract->>StreamContract: total_amount += added_amount (rate increases)
+    StreamContract->>StreamContract: total_amount += added_amount (recomputes vested over elapsed)
     StreamContract-->>Sender: emit ToppedUp(sender, id, added_amount, new_total, end_time)
     StreamContract-->>Sender: return ok
     deactivate StreamContract
 ```
+
+`topup_stream` raises `total_amount` while keeping `start_time`, `end_time`, and `cliff_time` unchanged, so the vested amount is recomputed over the entire elapsed time since `start_time`. Once the cliff has passed, topping up causes the vested amount to jump retroactively in the same ledger by `added_amount * elapsed / duration` (subject to integer division rounding).
+
+For example, take a stream of `1,000` tokens over `1,000` seconds (`start_time = 100`, `end_time = 1100`, `cliff_time = 100`) topped up by `1,000` tokens at the midpoint (`now = 600`, `elapsed = 500`):
+
+- **Before top-up:** `total_amount = 1,000`, `vested = 500`, `withdrawable = 500`, `locked = 500`.
+- **After top-up (`+1,000`):** `total_amount = 2,000`, `vested = 1,000` (`500 + 1,000 * 500 / 1,000`), `withdrawable = 1,000`, `locked = 1,000`.
 
 A stream can also be read at any time without changing it. The vested and
 `locked` amounts mirror each other and always sum to the total, while
@@ -932,7 +939,7 @@ When a stream is created, the **entire `total_amount` is transferred from the se
 
 1. **Trustless guarantee for the recipient:** The recipient is guaranteed that the tokens exist and are locked in the contract for the duration of the stream. There is no risk that the sender will fail to pay, run out of funds, or renege on the agreement. The vested amount is always claimable, regardless of what the sender does afterward.
 
-2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding, top-ups, or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created, so the vesting logic is purely time-based arithmetic with no external dependencies.
+2. **Simplifies the contract:** Because the contract holds the full amount, it does not need to handle partial funding or the complexity of a sender failing to deliver. Every stream is fully funded from the moment it is created—and any top-up deposits the added amount in full before `total_amount` changes—so the vesting logic is purely time-based arithmetic with no external dependencies.
 
 3. **Enables cancellation refunds:** The sender can cancel a stream and immediately receive the unvested remainder back. This is only possible because the full amount is already in the contract — there is no need to track or enforce future payments.
 
@@ -1010,6 +1017,15 @@ contract and run to completion or are cancelled there, while new streams are
 created on the new one. Integrators must point clients at the new contract ID.
 See [docs/INTEGRATOR_OPERATIONS.md](docs/INTEGRATOR_OPERATIONS.md) and
 [THREAT_MODEL.md § Immutability](THREAT_MODEL.md#immutability).
+
+## Known limitations
+
+- **No pause or admin:** The contract has no admin key, freeze, or emergency-stop mechanism, so running streams cannot be paused or overridden by a privileged party ([ADR: No Pause, Freeze, or Emergency-Stop Mechanism](docs/DECISIONS.md#adr-no-pause-freeze-or-emergency-stop-mechanism)).
+- **Tokens must be fee-free and non-reentrant:** The contract accepts any SEP-41 token without an allowlist and assumes transfers neither charge fees, rebase, nor re-enter the contract ([THREAT_MODEL.md § Trust assumptions about the token contract](THREAT_MODEL.md#trust-assumptions-about-the-token-contract)).
+- **Timestamps are seconds with no magnitude check:** `start_time`, `end_time`, and `cliff_time` are read as `u64` Unix seconds without bounds validation, so passing milliseconds creates a stream far in the future ([ADR: Do Not Bound Timestamp Magnitude](docs/ADR_TIMESTAMP_MAGNITUDE.md)).
+- **Batch reads are capped at 20:** `get_streams` (and `withdraw_many` / `withdrawable_many`) accept at most 20 stream IDs per call to stay within Soroban ledger resource limits ([THREAT_MODEL.md § Batch reads and cancellation previews](THREAT_MODEL.md#batch-reads-and-cancellation-previews)).
+- **Archived entries need restoring:** Stream records and instance storage expire when their Soroban TTL lapses and must be restored on-chain before calls can read or mutate them ([THREAT_MODEL.md § Storage lifetime and archival](THREAT_MODEL.md#storage-lifetime-and-archival)).
+- **Not upgradeable:** The contract is immutable with no proxy or WASM upgrade path, so fixes or new features require deploying a new contract address ([docs/INTEGRATOR_OPERATIONS.md § Redeployment Without Upgradeability](docs/INTEGRATOR_OPERATIONS.md#redeployment-without-upgradeability)).
 
 ## Events
 
