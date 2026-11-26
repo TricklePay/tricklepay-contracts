@@ -184,7 +184,7 @@ impl StreamContract {
     /// pays a given stream.
     ///
     /// Each positive payout makes one token transfer and emits one
-    /// [`events::Withdrawn`] event. The batch accepts at most
+    /// `Withdrawn` event. The batch accepts at most
     /// [`MAX_BATCH_SIZE`] ids.
     pub fn withdraw_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
         if ids.len() > MAX_BATCH_SIZE {
