@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Pure vesting calculations.
 //!
 //! These functions take plain numbers rather than a [`Stream`] so they can be

@@ -454,9 +454,7 @@ fixed schedule.
 
 ### Cutting and tagging a release
 
-1. Confirm `main` is green: `make check` (manifest, formatting, lint, tests, audit,
-   markdown link checks, script linting, and interface diff), so the committed
-   `docs/interface.txt` matches a fresh `make wasm` build.
+1. Confirm `main` is green by running the release checks: `make release-check` (manifest, locked build, WASM hash verification, and changelog entry check). This ensures the committed `docs/interface.txt` matches a fresh `make wasm` build.
 2. Pick the version number under
    [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a breaking
    interface change (see
@@ -469,14 +467,12 @@ fixed schedule.
      and open a new, empty `## [Unreleased]` section above it for whatever
      comes next.
    - Bump `version` in the workspace `Cargo.toml` to match.
-   - Run `make wasm-hash` and record its `sha256:` output in the tag
-     annotation — this is the hash anyone can later check a live deployment
-     against (see
-     [Verifying a deployment](README.md#verifying-a-deployment)).
-4. Tag that commit with an annotated tag, `vX.Y.Z`
-   (`git tag -a vX.Y.Z -m "..."`), and push it (`git push origin vX.Y.Z`).
-   The tag is what makes a specific `CHANGELOG.md` entry and a specific,
-   reproducible WASM build addressable by name.
+4. Use `./scripts/release-tag.sh` to verify the release, compute the WASM hash,
+   and draft the release notes with the hash and commit reference. The script
+   refuses to run on a dirty working tree, runs the release checks, and asks for
+   confirmation before creating the annotated tag. The tag includes the full
+   changelog section and WASM hash in its annotation so a tag alone names a
+   reproducible, verifiable build.
 
 ### How a tag relates to a deployed contract
 
