@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{vec, Event};
+use soroban_sdk::{vec, Bytes, Event};
 
 use crate::events::{Cancelled, Created, Withdrawn};
 
@@ -135,6 +135,40 @@ fn lifecycle_events_follow_operation_order() {
 // ── Event topic correctness ──────────────────────────────────────────────────
 
 #[test]
+fn created_event_includes_the_reference() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let reference = Bytes::from_slice(&t.env, b"PAYROLL-42");
+
+    let id = t.contract.create_stream_with_reference(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &750,
+        &100,
+        &1_100,
+        &400,
+        &reference,
+    );
+
+    t.assert_latest_stream_event_topics(
+        Created {
+            sender: t.sender.clone(),
+            recipient: t.recipient.clone(),
+            id,
+            token: t.token_address.clone(),
+            total_amount: 750,
+            start_time: 100,
+            end_time: 1_100,
+            cliff_time: 400,
+            created_at: 100,
+            reference,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+}
+
+#[test]
 fn created_event_topics_index_sender_and_recipient() {
     let t = StreamTest::setup(1_000);
     t.set_time(100);
@@ -160,6 +194,8 @@ fn created_event_topics_index_sender_and_recipient() {
             start_time: 100,
             end_time: 1_100,
             cliff_time: 400,
+            created_at: 100,
+            reference: Bytes::new(&t.env),
         }
         .to_xdr(&t.env, &t.contract.address),
     );
@@ -243,6 +279,8 @@ fn lifecycle_events_carry_the_acting_party() {
             start_time: 100,
             end_time: 1_100,
             cliff_time: 100,
+            created_at: 100,
+            reference: Bytes::new(&t.env),
         }
         .to_xdr(&t.env, &t.contract.address),
     );

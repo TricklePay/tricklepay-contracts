@@ -32,6 +32,7 @@
 //!
 //! - **Stream Lifecycle**:
 //!   - [`StreamContract::create_stream`]: Open a new token stream with schedule & cliff parameters.
+//!   - [`StreamContract::transfer_recipient`]: Reassign a stream's receiving rights to a new address.
 //!   - [`StreamContract::topup_stream`]: Deposit additional tokens into an existing active or pending stream.
 //!   - [`StreamContract::cancel_preview`]: Preview the settlement for a cancellation.
 //!   - [`StreamContract::withdraw`]: Pull all currently withdrawable vested tokens.
@@ -68,10 +69,10 @@ pub mod vesting;
 #[cfg(test)]
 mod tests;
 
-pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE, MAX_REFERENCE_LENGTH};
 pub use contract::{StreamContract, StreamContractClient};
 pub use error::StreamError;
-pub use types::{Stream, StreamStatus};
+pub use types::{Stream, StreamInput, StreamStatus};
 
 use soroban_sdk::contractmeta;
 

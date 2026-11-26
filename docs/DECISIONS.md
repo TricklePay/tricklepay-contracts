@@ -27,12 +27,55 @@ Add each new ADR to this list with its status and heading link.
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
+| [Recipient transfer rights](#adr-recipient-transfer-rights) | Accepted |
+| [Stream references are opaque bounded bytes](#adr-stream-references-are-opaque-bounded-bytes) | Accepted |
 | [Top-up increases rate and preserves end time](#adr-top-up-increases-rate-and-preserves-end-time) | Accepted |
 
 ## New ADR template note
 
 When adding an ADR, include its title and status, then add a row with that
 status and a link to its heading in the index above.
+
+## ADR: Recipient Transfer Rights
+
+- **Status**: Accepted
+- **Context**: A recipient may need to assign a stream's receiving rights
+  because of a sale, payroll reassignment, key migration, or vesting schedule
+  transfer. Requiring sender approval would preserve the sender's role but
+  prevent unilateral reassignment.
+- **Decision**: The current recipient may call `transfer_recipient(id,
+  new_recipient)`. The call is immediate and irreversible, changes only
+  `recipient`, requires no approval from the sender or new recipient, and
+  rejects the contract address and the current recipient as destinations.
+  Transferring to the sender is allowed.
+- **Consequences**:
+  - Withdrawal authorization follows the latest recipient; the old recipient
+    loses withdrawal rights.
+  - Sender cancellation rights and the refund destination remain unchanged.
+  - Vesting, withdrawn accounting, escrow, and cancellation settlement do not
+    change as a result of the transfer.
+  - Indexers must process `RecipientTransferred` events and update their
+    current-recipient mapping by stream id.
+- **Event**: `RecipientTransferred` indexes both `old_recipient` and
+  `new_recipient` and carries `stream_id` in the data payload.
+- **Related References**:
+  - See [DESIGN_RECIPIENT_TRANSFER.md](./DESIGN_RECIPIENT_TRANSFER.md).
+
+## ADR: Stream References are Opaque Bounded Bytes
+
+- **Status**: Accepted
+- **Context**: Payroll and invoice integrations need to correlate streams with
+  records in an external system, but reference formats vary by integration.
+- **Decision**: A stream reference is an opaque `Bytes` value of at most 64
+  bytes. UTF-8 is recommended for readable identifiers, but the contract does
+  not validate text encoding or normalize contents. An empty byte string means
+  no reference.
+- **API**: `create_stream_with_reference` adds the reference parameter.
+  `create_stream` remains source-compatible at the entry-point level and creates
+  streams with an empty reference.
+- **Consequences**: The reference is copied into stream storage and the
+  `Created` event. References over 64 bytes are rejected with
+  `StreamError::ReferenceTooLong` (code 16) before state or token changes.
 
 ## ADR 1: Enumeration is off-chain, not an entry point
 

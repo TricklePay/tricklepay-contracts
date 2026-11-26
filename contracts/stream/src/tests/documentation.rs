@@ -84,6 +84,8 @@ fn stream_error_all_matches_exhaustive_match() {
         StreamError::StreamCountExhausted => check_in_all(err),
         StreamError::InvalidParticipant => check_in_all(err),
         StreamError::BatchTooLarge => check_in_all(err),
+        StreamError::EmptyBatch => check_in_all(err),
+        StreamError::ReferenceTooLong => check_in_all(err),
     };
 
     for &err in StreamError::ALL {
@@ -91,7 +93,7 @@ fn stream_error_all_matches_exhaustive_match() {
     }
     assert_eq!(
         StreamError::ALL.len(),
-        13,
+        15,
         "StreamError::ALL must have one entry per enum variant"
     );
 }
@@ -265,6 +267,21 @@ fn interface_snapshot_lists_every_public_entry_point() {
                 "cliff_time",
             ],
         ),
+        (
+            "create_stream_with_reference",
+            &[
+                "env",
+                "sender",
+                "recipient",
+                "token",
+                "total_amount",
+                "start_time",
+                "end_time",
+                "cliff_time",
+                "reference",
+            ],
+        ),
+        ("transfer_recipient", &["env", "id", "new_recipient"]),
         ("withdraw", &["env", "id"]),
         ("withdraw_many", &["env", "ids"]),
         ("withdraw_amount", &["env", "id", "amount"]),

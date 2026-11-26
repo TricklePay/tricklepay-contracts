@@ -25,3 +25,10 @@ pub const BPS_SCALE: u32 = 10_000;
 /// Capped at 20 ids to protect against unbounded ledger read footprint growth and
 /// CPU instruction limit exhaustion in a single transaction invocation.
 pub const MAX_BATCH_SIZE: u32 = 20;
+
+/// Maximum length of an optional stream reference, in bytes.
+///
+/// References are opaque byte strings rather than text types. Integrators may
+/// encode invoice or payroll identifiers in UTF-8, but the contract does not
+/// validate or normalize their contents. At most 64 bytes are stored.
+pub const MAX_REFERENCE_LENGTH: u32 = 64;

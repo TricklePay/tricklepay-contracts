@@ -20,7 +20,7 @@ use crate::types::{Stream, StreamStatus};
 ///
 /// ```
 /// use soroban_sdk::testutils::Address as _;
-/// use soroban_sdk::{Address, Env};
+/// use soroban_sdk::{Address, Bytes, Env};
 /// use tricklepay_stream::status::stream_status;
 /// use tricklepay_stream::{Stream, StreamStatus};
 ///
@@ -35,6 +35,8 @@ use crate::types::{Stream, StreamStatus};
 ///     end_time: 1_100,
 ///     cliff_time: 100,
 ///     cancelled: false,
+///     created_at: 100,
+///     reference: Bytes::new(&env),
 /// };
 ///
 /// assert_eq!(stream_status(&stream, 50), StreamStatus::Pending);
@@ -58,7 +60,7 @@ pub fn stream_status(stream: &Stream, now: u64) -> StreamStatus {
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{Address, Env};
+    use soroban_sdk::{Address, Bytes, Env};
 
     /// A stream of 1000 units over `[100, 1100]`, no cliff (`cliff == start`).
     fn stream(cancelled: bool) -> Stream {
@@ -73,6 +75,8 @@ mod tests {
             end_time: 1_100,
             cliff_time: 100,
             cancelled,
+            created_at: 100,
+            reference: Bytes::new(&env),
         }
     }
 
@@ -165,7 +169,7 @@ mod proptests {
     use super::*;
     use proptest::prelude::*;
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{Address, Env};
+    use soroban_sdk::{Address, Bytes, Env};
 
     prop_compose! {
         fn valid_schedules()(
@@ -188,6 +192,8 @@ mod proptests {
             end_time,
             cliff_time: start_time,
             cancelled,
+            created_at: start_time,
+            reference: Bytes::new(&env),
         }
     }
 

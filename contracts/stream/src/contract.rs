@@ -1,11 +1,11 @@
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Bytes, Env, Vec};
 
-pub use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE};
+pub use crate::constants::{BPS_SCALE, MAX_AMOUNT, MAX_BATCH_SIZE, MAX_REFERENCE_LENGTH};
 use crate::error::StreamError;
 use crate::events;
 use crate::status;
 use crate::storage;
-use crate::types::{Stream, StreamStatus};
+use crate::types::{Stream, StreamInput, StreamStatus};
 use crate::vesting;
 
 #[contract]
@@ -124,7 +124,8 @@ impl StreamContract {
         // end_time has already passed would be 100 % vested on creation —
         // effectively an immediate transfer with extra ceremony. Callers who
         // genuinely need that should use a token transfer directly.
-        if end_time <= env.ledger().timestamp() {
+        let created_at = env.ledger().timestamp();
+        if end_time <= created_at {
             return Err(StreamError::StreamWindowInPast);
         }
 
@@ -154,6 +155,8 @@ impl StreamContract {
             end_time,
             cliff_time,
             cancelled: false,
+            created_at,
+            reference: Bytes::new(&env),
         };
         storage::set_stream(&env, id, &stream);
         storage::set_stream_count(&env, next_id);
@@ -162,6 +165,260 @@ impl StreamContract {
         events::publish_created(&env, id, &stream);
 
         Ok(id)
+    }
+
+    /// Open a stream with an optional opaque payroll or invoice reference.
+    ///
+    /// `reference` is bounded to [`MAX_REFERENCE_LENGTH`] bytes. It may contain
+    /// any bytes; UTF-8 encoding is recommended for human-readable identifiers
+    /// but is not required or enforced. The reference is stored on the stream
+    /// and published in the `Created` event. Existing `create_stream` callers
+    /// are unchanged and create streams with an empty reference.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_stream_with_reference(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token: Address,
+        total_amount: i128,
+        start_time: u64,
+        end_time: u64,
+        cliff_time: u64,
+        reference: Bytes,
+    ) -> Result<u64, StreamError> {
+        sender.require_auth();
+
+        if reference.len() > MAX_REFERENCE_LENGTH {
+            return Err(StreamError::ReferenceTooLong);
+        }
+
+        let this = env.current_contract_address();
+        if sender == this || recipient == this || token == this {
+            return Err(StreamError::InvalidParticipant);
+        }
+        if total_amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        if total_amount > MAX_AMOUNT {
+            return Err(StreamError::AmountTooLarge);
+        }
+        if start_time >= end_time {
+            return Err(StreamError::InvalidTimeRange);
+        }
+        if cliff_time < start_time || cliff_time > end_time {
+            return Err(StreamError::InvalidCliff);
+        }
+
+        let created_at = env.ledger().timestamp();
+        if end_time <= created_at {
+            return Err(StreamError::StreamWindowInPast);
+        }
+
+        let id = storage::stream_count(&env);
+        let next_id = id.checked_add(1).ok_or(StreamError::StreamCountExhausted)?;
+
+        TokenClient::new(&env, &token).transfer(
+            &sender,
+            env.current_contract_address(),
+            &total_amount,
+        );
+
+        let stream = Stream {
+            sender,
+            recipient,
+            token,
+            total_amount,
+            withdrawn: 0,
+            start_time,
+            end_time,
+            cliff_time,
+            cancelled: false,
+            created_at,
+            reference,
+        };
+        storage::set_stream(&env, id, &stream);
+        storage::set_stream_count(&env, next_id);
+        storage::extend_instance_ttl(&env);
+
+        events::publish_created(&env, id, &stream);
+
+        Ok(id)
+    }
+
+    /// Open several streams from one `sender` and `token` in a single call.
+    ///
+    /// Each [`StreamInput`] entry carries its own recipient, amount, and
+    /// schedule; the batch is funded by one token transfer of the summed
+    /// amounts. The returned ids correspond to entries in input order.
+    ///
+    /// # All-or-nothing validation
+    ///
+    /// The batch is limited to between 1 and [`MAX_BATCH_SIZE`] entries. An
+    /// empty batch returns [`StreamError::EmptyBatch`], an oversized one
+    /// [`StreamError::BatchTooLarge`]. **Any invalid entry rejects the entire
+    /// batch**: no ids are consumed, no streams are written, no token transfer
+    /// occurs, and no events are published.
+    ///
+    /// Checks run in this order, before any token transfer or storage write:
+    ///
+    /// 1. **Authorization** — `sender` must authorize the call.
+    /// 2. **Batch shape** — empty or oversized batches are rejected.
+    /// 3. **Shared participants** — [`StreamError::InvalidParticipant`] if
+    ///    `sender` or `token` is this contract's own address, or if `token` is
+    ///    the `sender`.
+    /// 4. **Entries, in input order** — participant addresses (the recipient
+    ///    must differ from the sender and be neither this contract's address
+    ///    nor the token), then amount, schedule, cliff, and future end time,
+    ///    using the same rules as `create_stream`.
+    /// 5. **Combined amount** — [`StreamError::AmountTooLarge`] if summing the
+    ///    entries overflows `i128` or exceeds [`MAX_AMOUNT`].
+    /// 6. **Capacity** — [`StreamError::StreamCountExhausted`] if the id counter
+    ///    cannot allocate every entry without overflowing `u64`.
+    ///
+    /// After validation the combined amount is transferred once from `sender`
+    /// to the contract, then each stream is stored and one existing
+    /// [`events::Created`] event is published per stream in input order. There
+    /// is no separate batch event.
+    pub fn create_streams(
+        env: Env,
+        sender: Address,
+        token: Address,
+        entries: Vec<StreamInput>,
+    ) -> Result<Vec<u64>, StreamError> {
+        sender.require_auth();
+
+        // 1. Batch shape. Both bounds are checked before any per-entry work so
+        //    an empty or oversized request costs the caller almost nothing.
+        if entries.is_empty() {
+            return Err(StreamError::EmptyBatch);
+        }
+        if entries.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        // 2. Shared participants. This contract's own address is never valid in
+        //    either role, and the token cannot also be the sender.
+        let this = env.current_contract_address();
+        if sender == this || token == this || token == sender {
+            return Err(StreamError::InvalidParticipant);
+        }
+
+        // 3. Every entry, in input order. A batch is accepted only if all of
+        //    its entries are valid, so a single failure rejects the lot.
+        let now = env.ledger().timestamp();
+        for entry in entries.iter() {
+            if entry.recipient == this || entry.recipient == token || entry.recipient == sender {
+                return Err(StreamError::InvalidParticipant);
+            }
+            if entry.total_amount <= 0 {
+                return Err(StreamError::InvalidAmount);
+            }
+            if entry.total_amount > MAX_AMOUNT {
+                return Err(StreamError::AmountTooLarge);
+            }
+            if entry.start_time >= entry.end_time {
+                return Err(StreamError::InvalidTimeRange);
+            }
+            if entry.cliff_time < entry.start_time || entry.cliff_time > entry.end_time {
+                return Err(StreamError::InvalidCliff);
+            }
+            if entry.end_time <= now {
+                return Err(StreamError::StreamWindowInPast);
+            }
+        }
+
+        // 4. Combined amount. The checked sum keeps the single transfer inside
+        //    the supported amount ceiling.
+        let mut total: i128 = 0;
+        for entry in entries.iter() {
+            total = total
+                .checked_add(entry.total_amount)
+                .ok_or(StreamError::AmountTooLarge)?;
+            if total > MAX_AMOUNT {
+                return Err(StreamError::AmountTooLarge);
+            }
+        }
+
+        // 5. Capacity. Reserve every id before any tokens move.
+        let start_id = storage::stream_count(&env);
+        let next_id = start_id
+            .checked_add(u64::from(entries.len()))
+            .ok_or(StreamError::StreamCountExhausted)?;
+
+        // Effects. Every rejection above returns before this point, so a failed
+        // batch never moves tokens or touches storage.
+        TokenClient::new(&env, &token).transfer(&sender, env.current_contract_address(), &total);
+
+        let mut ids = Vec::new(&env);
+        for (offset, entry) in entries.iter().enumerate() {
+            let id = start_id + offset as u64;
+            let stream = Stream {
+                sender: sender.clone(),
+                recipient: entry.recipient,
+                token: token.clone(),
+                total_amount: entry.total_amount,
+                withdrawn: 0,
+                start_time: entry.start_time,
+                end_time: entry.end_time,
+                cliff_time: entry.cliff_time,
+                cancelled: false,
+                created_at: now,
+                reference: Bytes::new(&env),
+            };
+            storage::set_stream(&env, id, &stream);
+            events::publish_created(&env, id, &stream);
+            ids.push_back(id);
+        }
+        storage::set_stream_count(&env, next_id);
+        storage::extend_instance_ttl(&env);
+
+        Ok(ids)
+    }
+
+    /// Transfer the right to receive this stream to `new_recipient`.
+    ///
+    /// Only the current recipient may call this. The new recipient gains all
+    /// rights to withdraw vested amounts; the old recipient loses them
+    /// immediately. The vesting schedule, `total_amount`, and `withdrawn`
+    /// balance are unchanged, and no tokens move. The sender's cancellation
+    /// rights and refund destination are unaffected.
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Validation order
+    ///
+    /// The stream is loaded from storage first. If `id` does not exist, this
+    /// returns [`StreamError::StreamNotFound`] before any authorization check,
+    /// so an unknown id can be distinguished without recipient authorization.
+    /// For an existing stream the checks then run in this order:
+    ///
+    /// 1. The stream's current `recipient` must authorize the call.
+    /// 2. [`StreamError::InvalidParticipant`] if `new_recipient` is this
+    ///    contract's own address.
+    /// 3. [`StreamError::InvalidParticipant`] if `new_recipient` equals the
+    ///    current recipient — a no-op transfer is rejected rather than
+    ///    silently succeeding.
+    ///
+    /// Transferring the stream to the sender is allowed.
+    pub fn transfer_recipient(
+        env: Env,
+        id: u64,
+        new_recipient: Address,
+    ) -> Result<(), StreamError> {
+        let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        stream.recipient.require_auth();
+
+        if new_recipient == env.current_contract_address() || new_recipient == stream.recipient {
+            return Err(StreamError::InvalidParticipant);
+        }
+
+        let old_recipient = stream.recipient.clone();
+        stream.recipient = new_recipient.clone();
+        storage::set_stream(&env, id, &stream);
+
+        events::publish_recipient_transferred(&env, &old_recipient, &new_recipient, id);
+
+        Ok(())
     }
 
     /// Transfers the recipient's full withdrawable balance and returns the amount.

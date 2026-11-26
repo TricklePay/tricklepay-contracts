@@ -673,7 +673,9 @@ reassigned.
 | 11   | `StreamWindowInPast`      | `end_time` is not in the future at stream creation — the window would be entirely in the past, making the stream 100 % vested immediately (use a direct token transfer instead).                                  |
 | 12   | `StreamCountExhausted`    | The stream id counter has reached `u64::MAX` and cannot increment further without wrapping (which would overwrite existing streams). No further streams can be created on this contract instance.                 |
 | 13   | `InvalidParticipant`      | At stream creation, `sender` and `recipient` are the same address, or any of `sender`, `recipient`, or `token` is the stream contract's own address, or the `token` address appears as `sender` or `recipient`. |
-| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request.                                                                                             |
+| 14   | `BatchTooLarge`          | `get_streams` is called with more than `MAX_BATCH_SIZE` stream ids in a single request, or `create_streams` is called with more than 20 entries.                                                                     |
+| 15   | `EmptyBatch`             | `create_streams` is called with no entries.                                                                                                                                                                        |
+| 16   | `ReferenceTooLong`        | `create_stream_with_reference` receives more than `MAX_REFERENCE_LENGTH` (64) bytes. No state or tokens change.                                                                                                     |
 
 **Token contract errors.** When a token `transfer` fails — for example,
 insufficient balance or a missing trustline — the failure surfaces as
@@ -1076,9 +1078,17 @@ Emitted by `create_stream` when a new stream is opened successfully.
 | `start_time`   | data  | `u64`     | Unix timestamp (seconds) when vesting begins                                                               |
 | `end_time`     | data  | `u64`     | Unix timestamp (seconds) when the stream is fully vested                                                   |
 | `cliff_time`   | data  | `u64`     | Unix timestamp (seconds) before which nothing can be withdrawn; equals `start_time` when there is no cliff |
+| `created_at`   | data  | `u64`     | Ledger timestamp (seconds) when the stream was created                                                     |
+| `reference`    | data  | `Bytes`   | Opaque matching reference, or empty when none was supplied                                               |
 
 Indexers can subscribe on the `sender` or `recipient` topics to receive all
 streams for a given address without scanning every event.
+
+The optional reference is 64 bytes or fewer and is stored as an opaque
+`Bytes` value. UTF-8 text is recommended for invoice or payroll identifiers,
+but the contract does not validate text encoding or normalize the bytes.
+Call `create_stream_with_reference` to supply it; `create_stream` remains
+unchanged and stores an empty reference.
 
 ### `Withdrawn`
 
@@ -1126,6 +1136,21 @@ Emitted by `topup_stream` when a sender deposits additional tokens into an exist
 | `added_amount`     | data  | `i128`    | Number of additional tokens deposited                      |
 | `new_total_amount` | data  | `i128`    | New cumulative total tokens locked in the stream           |
 | `new_end_time`     | data  | `u64`     | Stream end time (preserved under rate increase model)      |
+
+### `RecipientTransferred`
+
+Emitted by `transfer_recipient` after a stream's current recipient replaces
+the old recipient. No tokens move.
+
+| Field           | Kind  | Type      | Description                                             |
+| --------------- | ----- | --------- | ------------------------------------------------------- |
+| `old_recipient` | topic | `Address` | The recipient who gave up withdrawal rights             |
+| `new_recipient` | topic | `Address` | The recipient who gained withdrawal rights              |
+| `stream_id`     | data  | `u64`     | The stream whose recipient changed                      |
+
+Indexers must update the current recipient mapping for `stream_id` after
+every `RecipientTransferred` event. The old recipient loses withdrawal
+authorization immediately, while the sender's cancellation rights are unchanged.
 
 ### RPC getEvents filter examples
 
@@ -1298,6 +1323,7 @@ measured resource consumption in the local test environment using Soroban SDK
 | Entry point | CPU instructions | Memory (bytes) | Read entries | Write entries | Operations & Footprint |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `create_stream` | ~329,231 | ~128,436 | 9 | 5 | Reads instance & `StreamCount`; writes incremented counter & stream; executes token transfer |
+| `create_streams` (20 entries) | ~1,696,805 | ~754,188 | 28 | 24 | One sender authorization and one token transfer for the whole batch; writes 20 streams and emits 20 `Created` events |
 | `withdraw` | ~327,290 | ~125,723 | 8 | 4 | Reads stream; writes updated withdrawn balance & bumps TTL; executes token payout transfer |
 | `withdraw_many` (20 ids) | ~5,672,659 | ~1,347,808 | 27 | 23 | One token transfer and `Withdrawn` event per positive stream payout |
 | `cancel` | ~325,373 | ~119,236 | 7 | 4 | Reads stream; writes cancelled flag & adjusted total; bumps TTL; executes token refund transfer |
@@ -1597,6 +1623,7 @@ console.log('Stream record:', {
   end_time: stream.end_time,         // bigint
   cliff_time: stream.cliff_time,     // bigint
   cancelled: stream.cancelled,       // boolean
+  created_at: stream.created_at,     // bigint
 });
 ```
 
@@ -1782,6 +1809,7 @@ async function fetchCreatedEvents(server, contractId, startLedger) {
       startTime: data.start_time,    // bigint (u64)
       endTime: data.end_time,        // bigint (u64)
       cliffTime: data.cliff_time,    // bigint (u64)
+      createdAt: data.created_at,    // bigint (u64)
     };
   });
 

@@ -51,6 +51,27 @@ contract.
 
 ### Added
 
+- **ABI:** Added `MAX_REFERENCE_LENGTH = 64` and
+  `create_stream_with_reference(..., reference: Bytes) -> u64`, preserving the
+  existing `create_stream` signature and behavior. References are opaque bytes,
+  and UTF-8 is recommended but not enforced.
+- **ABI:** Added `reference: Bytes` to the `Stream` record and `Created` event.
+  Existing streams and streams created by `create_stream` use an empty byte
+  string. Added `ReferenceTooLong` error code `16` for references over 64 bytes.
+- **ABI:** Added `transfer_recipient(id, new_recipient) -> ()`, allowing the
+  current recipient to assign withdrawal rights to another address.
+- **ABI:** Added `RecipientTransferred` event with indexed `old_recipient` and
+  `new_recipient` topics and `stream_id` in the data payload.
+- **non-ABI:** Accepted `docs/DESIGN_RECIPIENT_TRANSFER.md`, recording transfer
+  authorization, validation, escrow, cancellation, and indexer decisions.
+- **ABI:** Added `created_at: u64` to the `Stream` struct and the `Created` event
+  payload, recording the ledger timestamp at which the stream was created.
+  **Migration note:** regenerate generated clients and update event decoders;
+  `created_at` is the last `Created` data field, so consumers that decode the
+  payload positionally must read it after `cliff_time`. Stream records written
+  by a pre-`created_at` contract do not contain the field and cannot be read as
+  the new `Stream` type; backfill them from the creation ledger close time or
+  migrate them before upgrading a deployment.
 - **ABI:** Added `rate_per_second(id) -> i128`, rounding down by stream duration and returning `0` for cancelled streams.
 - **ABI:** Added `withdrawable_many(ids) -> Vec<i128>`, returning zero for unknown ids and enforcing `MAX_BATCH_SIZE`.
 - **ABI:** Added `withdraw_many(ids) -> Vec<i128>` with per-stream transfers and events, one authorization per distinct recipient, and `NothingToWithdraw` when the batch pays nothing.

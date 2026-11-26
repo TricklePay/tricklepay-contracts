@@ -8,7 +8,9 @@
 //! | `helpers`         | `StreamTest` fixture and shared utilities                     |
 //! | `budget`          | Resource budget regression tests and entry point ceilings     |
 //! | `creation`        | `create_stream`: validation, parameters, participant checks   |
+//! | `batch_creation`  | `create_streams`: atomic multi-stream creation and events     |
 //! | `withdrawal`      | `withdraw`, `withdraw_amount`: vesting, cliff, partial draws  |
+//! | `recipient_transfer` | `transfer_recipient`: authorization, validation, events    |
 //! | `cancellation`    | `cancel`: refunds, freezing, cliff scenarios, lifecycle       |
 //! | `views`           | Read-only queries: `progress`, `locked`, `status`, etc.       |
 //! | `documentation`   | README error-code table and interface snapshot checks         |
@@ -23,6 +25,7 @@
 pub mod helpers;
 
 mod auth;
+mod batch_creation;
 mod budget;
 mod cancellation;
 mod creation;
@@ -30,6 +33,7 @@ mod documentation;
 mod events;
 mod proptest_escrow;
 mod readme_examples;
+mod recipient_transfer;
 mod reentrancy;
 mod storage;
 mod topup;

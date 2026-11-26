@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Bytes};
 
 /// A token stream with a linear schedule and optional cliff.
 #[contracttype]
@@ -22,6 +22,36 @@ pub struct Stream {
     pub cliff_time: u64,
     /// Whether the sender has cancelled the stream.
     pub cancelled: bool,
+    /// Unix timestamp in seconds at which the stream was created.
+    ///
+    /// Taken from the ledger clock when the creation transaction ran, so the
+    /// record is self-describing and streams that share a `start_time` can be
+    /// ordered by creation.
+    pub created_at: u64,
+    /// Optional opaque matching reference, empty when not provided.
+    ///
+    /// The contract stores at most 64 bytes and does not interpret the bytes.
+    pub reference: Bytes,
+}
+
+/// One entry in a [`StreamContract::create_streams`](crate::StreamContract::create_streams)
+/// batch.
+///
+/// A batch shares a single `sender` and `token`; each entry supplies its own
+/// recipient, amount, and schedule.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamInput {
+    /// Account that accrues and withdraws this stream's tokens.
+    pub recipient: Address,
+    /// Amount available for vesting in the token's smallest unit.
+    pub total_amount: i128,
+    /// Unix timestamp in seconds at which vesting begins.
+    pub start_time: u64,
+    /// Unix timestamp in seconds at which the stream is fully vested.
+    pub end_time: u64,
+    /// Unix timestamp in seconds before which withdrawals are unavailable.
+    pub cliff_time: u64,
 }
 
 impl Stream {

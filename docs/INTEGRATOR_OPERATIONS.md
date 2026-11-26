@@ -101,6 +101,9 @@ recipient, token, amount, and schedule before resubmitting. For `withdraw` or
 `withdraw_amount`, re-read `withdrawable` and the stream's `withdrawn` value
 before deciding whether there is still anything to claim. For `cancel`, read
 `status` and the `Cancelled` event before trying again.
+For `transfer_recipient`, re-read `get_stream(id).recipient` and look for the
+corresponding `RecipientTransferred` event before resubmitting. A successful
+retry must not assume the original recipient is still current.
 
 ## Indexer Consistency Requirements
 
@@ -147,6 +150,10 @@ own.
   own history has a gap for that id — not as a contract inconsistency — and
   call `get_stream(id)` to recover that stream's fields directly from the
   contract rather than trying to reconstruct history that was never observed.
+- Treat a `RecipientTransferred` event the same way: if the stream id has no
+  local `Created` record, call `get_stream(id)` to backfill the stream. Update
+  the current-recipient mapping from the latest transfer in ledger/operation
+  order, falling back to `Created.recipient` until the first transfer.
 - Periodically compare the highest stream id the indexer has recorded against
   `stream_count()`. Any gap means ids exist on-chain with no local `Created`
   record, and should be backfilled with `get_stream` (or `get_streams` in
@@ -162,8 +169,9 @@ own.
 
 ### Ignore, don't crash on, events it does not recognise
 
-Within one deployment the event set is fixed — `Created`, `Withdrawn`,
-`Cancelled`, and `ToppedUp`, with the fields documented in
+Within one deployment the event set is fixed — `Created`,
+`RecipientTransferred`, `Withdrawn`, `Cancelled`, and `ToppedUp`, with the
+fields documented in
 [README.md § Events](../README.md#events) — but an indexer built to be
 forward-compatible, or one scanning more broadly than a single contract id,
 will still encounter things it was not written to decode:
@@ -197,7 +205,9 @@ what is stored from what is computed at read time:
   (`new_total_amount`, since a top-up does **not** emit a new `Created` event);
   the running total of `amount` across every `Withdrawn` event for a given
   stream id (plus `destination` if displaying payout history); and, once seen, a
-  `Cancelled` event's `recipient_amount`/`sender_refund`.
+  `Cancelled` event's `recipient_amount`/`sender_refund`. Also store the latest
+  `RecipientTransferred.new_recipient` as the current recipient, and retain
+  the old/new addresses if recipient history is needed.
 - **Derive at read time, and never cache as of some past moment:** `vested`,
   `withdrawable`, `locked`, `progress`, and `status`. Each is a pure function
   of the stored facts above and the current ledger time — the same formula

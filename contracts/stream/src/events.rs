@@ -1,6 +1,6 @@
 //! Public events emitted by the stream contract for off-chain consumers.
 
-use soroban_sdk::{contractevent, Address, Env};
+use soroban_sdk::{contractevent, Address, Bytes, Env};
 
 use crate::types::Stream;
 
@@ -18,6 +18,23 @@ pub struct Created {
     pub start_time: u64,
     pub end_time: u64,
     pub cliff_time: u64,
+    pub created_at: u64,
+    pub reference: Bytes,
+}
+
+/// Emitted when a stream's recipient transfers their receiving rights.
+///
+/// Both the previous and the new recipient are indexed as topics so indexers
+/// can filter transfers by either side. The stream id stays in the data
+/// payload, matching the convention used by the other stream events.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecipientTransferred {
+    #[topic]
+    pub old_recipient: Address,
+    #[topic]
+    pub new_recipient: Address,
+    pub stream_id: u64,
 }
 
 /// Emitted when a recipient withdraws vested tokens.
@@ -66,6 +83,23 @@ pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
         start_time: stream.start_time,
         end_time: stream.end_time,
         cliff_time: stream.cliff_time,
+        created_at: stream.created_at,
+        reference: stream.reference.clone(),
+    }
+    .publish(env);
+}
+
+/// Publishes [`RecipientTransferred`] after the stream's recipient changes.
+pub(crate) fn publish_recipient_transferred(
+    env: &Env,
+    old_recipient: &Address,
+    new_recipient: &Address,
+    stream_id: u64,
+) {
+    RecipientTransferred {
+        old_recipient: old_recipient.clone(),
+        new_recipient: new_recipient.clone(),
+        stream_id,
     }
     .publish(env);
 }
