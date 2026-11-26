@@ -444,9 +444,7 @@ impl StreamContract {
     /// `Withdrawn` event. The batch accepts at most
     /// [`MAX_BATCH_SIZE`] ids.
     pub fn withdraw_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
-        if ids.len() > MAX_BATCH_SIZE {
-            return Err(StreamError::BatchTooLarge);
-        }
+        check_batch_size(&ids)?;
 
         let now = env.ledger().timestamp();
         let mut authorized_recipients = Vec::new(&env);
@@ -793,9 +791,7 @@ impl StreamContract {
     /// [`StreamError::BatchTooLarge`] when the limit is exceeded. It does not
     /// change storage or publish events.
     pub fn get_streams(env: Env, ids: Vec<u64>) -> Result<Vec<Option<Stream>>, StreamError> {
-        if ids.len() > MAX_BATCH_SIZE {
-            return Err(StreamError::BatchTooLarge);
-        }
+        check_batch_size(&ids)?;
 
         let mut streams = Vec::new(&env);
         for id in ids {
@@ -836,9 +832,7 @@ impl StreamContract {
     /// [`StreamError::BatchTooLarge`] when the limit is exceeded. It does not
     /// change storage or publish events.
     pub fn withdrawable_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
-        if ids.len() > MAX_BATCH_SIZE {
-            return Err(StreamError::BatchTooLarge);
-        }
+        check_batch_size(&ids)?;
 
         let now = env.ledger().timestamp();
         let mut amounts = Vec::new(&env);
@@ -990,4 +984,12 @@ fn withdraw_with(
 /// Move `amount` of `token` from `from` to `to`.
 fn transfer(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) {
     TokenClient::new(env, token).transfer(from, to, &amount);
+}
+
+/// Asserts that a batch of stream IDs does not exceed [`MAX_BATCH_SIZE`].
+fn check_batch_size(ids: &Vec<u64>) -> Result<(), StreamError> {
+    if ids.len() > MAX_BATCH_SIZE {
+        return Err(StreamError::BatchTooLarge);
+    }
+    Ok(())
 }
