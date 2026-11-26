@@ -299,6 +299,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup component add llvm-tools-preview
+          rustup target add wasm32v1-none
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -318,6 +319,9 @@ jobs:
           tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
           install -m 0755 "$RUNNER_TEMP/cargo-llvm-cov" "$HOME/.cargo/bin/cargo-llvm-cov"
           cargo llvm-cov --version
+
+      - name: Build WASM
+        run: cargo build --locked --release --target wasm32v1-none
 
       # Coverage floor reference (not enforced yet):
       # Baseline target: >= 80% line coverage and >= 80% region coverage across contract files.

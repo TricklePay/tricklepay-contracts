@@ -173,6 +173,21 @@ fn topup_rejected_with_amount_too_large_when_exceeding_max_amount() {
 }
 
 #[test]
+fn topup_accepts_exactly_max_amount_and_rejects_one_more() {
+    let t = StreamTest::setup(MAX_AMOUNT + 1);
+    t.set_time(100);
+    let id = t.open_default_stream(1);
+
+    t.contract.topup_stream(&id, &(MAX_AMOUNT - 1));
+
+    assert_eq!(t.contract.get_stream(&id).total_amount, MAX_AMOUNT);
+    assert_eq!(
+        t.contract.try_topup_stream(&id, &1),
+        Err(Ok(StreamError::AmountTooLarge))
+    );
+}
+
+#[test]
 fn topup_pending_stream_succeeds_and_status_remains_pending() {
     let t = StreamTest::setup(5_000);
     t.set_time(50);
