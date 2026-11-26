@@ -358,6 +358,14 @@ Not all view functions extend storage TTL. The contract deliberately distinguish
 - **`cancel_preview(id)`**: Previews simulate the cancellation outcome for frontends prior to transaction signing. Previews require no authorization, emit no events, and must not incur storage write charges during off-chain RPC simulation.
 - **`stream_exists(id)`**: Key presence check only, avoiding deserialization and storage extension costs.
 
+**Archived entries:** A stream not touched for longer than `ENTRY_TTL` (≈ 30 days) is archived by the network and must be restored off-chain before the contract can use it again. See [docs/TTL_RESTORE.md](docs/TTL_RESTORE.md) for the restore walkthrough with commands for testnet and mainnet.
+
+**Extending TTL:** To extend a stream's TTL before it reaches the expiry threshold, use the [scripts/extend-ttl.sh](scripts/extend-ttl.sh) helper script:
+```bash
+./scripts/extend-ttl.sh <contract-id> <stream-id> <network>
+```
+The script validates arguments, constructs the correct ledger key for `Stream(id)`, and prints the new TTL after successful extension.
+
 
 ### Example schedule
 
