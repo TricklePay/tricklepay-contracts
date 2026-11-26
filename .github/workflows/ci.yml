@@ -138,7 +138,54 @@ jobs:
           stellar version
 
       - name: Check interface snapshot
+        id: interface-check
         run: ./scripts/diff-interface.sh
+
+      - name: Generate interface diff on failure
+        if: failure() && steps.interface-check.outcome == 'failure'
+        run: |
+          wasm="target/wasm32v1-none/release/tricklepay_stream.wasm"
+          expected="docs/interface.txt"
+          generated="interface-generated.txt"
+          
+          stellar contract info interface --wasm "$wasm" --output rust > "$generated"
+          
+          # Generate unified diff
+          diff -u "$expected" "$generated" > interface.diff || true
+          
+          echo "Interface snapshot mismatch detected."
+          echo "Generated interface saved to interface-generated.txt"
+          echo "Unified diff saved to interface.diff"
+
+      - name: Upload interface diff artifact
+        if: failure() && steps.interface-check.outcome == 'failure'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: interface-diff-${{ github.sha }}
+          path: |
+            interface-generated.txt
+            interface.diff
+            docs/interface.txt
+          retention-days: 30
+
+      - name: Comment on interface diff location
+        if: failure() && steps.interface-check.outcome == 'failure'
+        run: |
+          {
+            echo "### ❌ Interface snapshot check failed"
+            echo ""
+            echo "The contract interface has changed. Download the artifacts to update \`docs/interface.txt\`:"
+            echo ""
+            echo "1. Go to the **Artifacts** section at the bottom of this workflow run"
+            echo "2. Download \`interface-diff-${{ github.sha }}\`"
+            echo "3. Copy \`interface-generated.txt\` to \`docs/interface.txt\` in your local checkout"
+            echo "4. Review the changes in \`interface.diff\`"
+            echo ""
+            echo "Or regenerate locally with:"
+            echo '```bash'
+            echo "make snapshot"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Check WASM size budget
         run: ./scripts/check-wasm-size.sh
