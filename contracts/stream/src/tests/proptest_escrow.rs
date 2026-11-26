@@ -32,6 +32,14 @@ pub enum StreamOp {
         stream_idx: usize,
         amount: i128,
     },
+    WithdrawTo {
+        stream_idx: usize,
+        destination_idx: usize,
+        amount: i128,
+    },
+    WithdrawMany {
+        stream_indices: Vec<usize>,
+    },
     Cancel {
         stream_idx: usize,
     },
@@ -137,6 +145,15 @@ fn stream_ops_strategy() -> impl Strategy<Value = Vec<StreamOp>> {
             (0usize..10).prop_map(|stream_idx| StreamOp::Withdraw { stream_idx }),
             (0usize..10, 1i128..=5_000)
                 .prop_map(|(stream_idx, amount)| StreamOp::WithdrawAmount { stream_idx, amount }),
+            (0usize..10, 0usize..3, 1i128..=5_000).prop_map(
+                |(stream_idx, destination_idx, amount)| StreamOp::WithdrawTo {
+                    stream_idx,
+                    destination_idx,
+                    amount,
+                },
+            ),
+            prop::collection::vec(0usize..10, 1..=5)
+                .prop_map(|stream_indices| StreamOp::WithdrawMany { stream_indices }),
             (0usize..10).prop_map(|stream_idx| StreamOp::Cancel { stream_idx }),
             (0usize..10, -100i128..=10_000)
                 .prop_map(|(stream_idx, amount)| StreamOp::TopUp { stream_idx, amount }),
@@ -167,11 +184,14 @@ fn stream_ops_strategy() -> impl Strategy<Value = Vec<StreamOp>> {
 }
 
 /// The multi-token invariant: each token's contract balance must equal the sum
-/// of all unwithdrawn escrow (`total_amount - withdrawn`) across all streams of that token.
+/// of all unwithdrawn escrow (`total_amount - withdrawn`) across all streams of that token,
+/// and `total_paid_out + contract_balance == total_deposited`.
 fn assert_multi_token_escrow_invariants(
     contract: &StreamContractClient,
     tokens: &[token::TokenClient; 3],
     stream_records: &[(u64, usize)],
+    total_deposited: &[i128; 3],
+    total_paid_out: &[i128; 3],
 ) {
     let mut expected_escrow = [0i128; 3];
 
@@ -188,6 +208,15 @@ fn assert_multi_token_escrow_invariants(
             actual_balance, expected,
             "escrow balance invariant violated for token {}: contract holds {} but unwithdrawn escrow is {}",
             token_idx, actual_balance, expected
+        );
+        assert_eq!(
+            total_paid_out[token_idx] + actual_balance,
+            total_deposited[token_idx],
+            "conservation invariant violated for token {}: paid_out ({}) + contract_balance ({}) != deposited ({})",
+            token_idx,
+            total_paid_out[token_idx],
+            actual_balance,
+            total_deposited[token_idx]
         );
     }
 }
@@ -240,6 +269,11 @@ proptest! {
             Address::generate(&env),
             Address::generate(&env),
         ];
+        let destinations = [
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+        ];
 
         // Fund each sender with a generous balance for every token.
         for sender in &senders {
@@ -251,6 +285,8 @@ proptest! {
 
         // Create the initial set of streams (at least 3 tokens, multiple senders and recipients).
         let mut stream_records: Vec<(u64, usize)> = Vec::new();
+        let mut total_deposited = [0i128; 3];
+        let mut total_paid_out = [0i128; 3];
 
         let start_time = env.ledger().timestamp();
         for spec in initial_specs {
@@ -266,36 +302,83 @@ proptest! {
                 &cliff_time,
             );
             stream_records.push((id, spec.token_idx));
+            total_deposited[spec.token_idx] += spec.amount;
         }
 
         // Verify invariant right after initial multi-token stream generation.
-        assert_multi_token_escrow_invariants(&contract, &tokens, &stream_records);
+        assert_multi_token_escrow_invariants(
+            &contract,
+            &tokens,
+            &stream_records,
+            &total_deposited,
+            &total_paid_out,
+        );
 
         // Execute sequential operations and verify invariant after every step.
         for op in ops {
             match op {
                 StreamOp::Withdraw { stream_idx } => {
                     if !stream_records.is_empty() {
-                        let id = stream_records[stream_idx % stream_records.len()].0;
-                        let _ = contract.try_withdraw(&id);
+                        let (id, token_idx) = stream_records[stream_idx % stream_records.len()];
+                        if let Ok(Ok(paid)) = contract.try_withdraw(&id) {
+                            total_paid_out[token_idx] += paid;
+                        }
                     }
                 }
                 StreamOp::WithdrawAmount { stream_idx, amount } => {
                     if !stream_records.is_empty() {
-                        let id = stream_records[stream_idx % stream_records.len()].0;
-                        let _ = contract.try_withdraw_amount(&id, &amount);
+                        let (id, token_idx) = stream_records[stream_idx % stream_records.len()];
+                        if let Ok(Ok(paid)) = contract.try_withdraw_amount(&id, &amount) {
+                            total_paid_out[token_idx] += paid;
+                        }
+                    }
+                }
+                StreamOp::WithdrawTo {
+                    stream_idx,
+                    destination_idx,
+                    amount,
+                } => {
+                    if !stream_records.is_empty() {
+                        let (id, token_idx) = stream_records[stream_idx % stream_records.len()];
+                        if let Ok(Ok(paid)) = contract.try_withdraw_to(
+                            &id,
+                            &destinations[destination_idx],
+                            &amount,
+                        ) {
+                            total_paid_out[token_idx] += paid;
+                        }
+                    }
+                }
+                StreamOp::WithdrawMany { stream_indices } => {
+                    if !stream_records.is_empty() {
+                        let mut ids = soroban_sdk::Vec::new(&env);
+                        let mut batch_tokens = Vec::new();
+                        for idx in stream_indices {
+                            let (id, token_idx) = stream_records[idx % stream_records.len()];
+                            ids.push_back(id);
+                            batch_tokens.push(token_idx);
+                        }
+                        if let Ok(Ok(amounts)) = contract.try_withdraw_many(&ids) {
+                            for (paid, token_idx) in amounts.iter().zip(batch_tokens.iter()) {
+                                total_paid_out[*token_idx] += paid;
+                            }
+                        }
                     }
                 }
                 StreamOp::Cancel { stream_idx } => {
                     if !stream_records.is_empty() {
-                        let id = stream_records[stream_idx % stream_records.len()].0;
-                        let _ = contract.try_cancel(&id);
+                        let (id, token_idx) = stream_records[stream_idx % stream_records.len()];
+                        if let Ok(Ok(refund)) = contract.try_cancel(&id) {
+                            total_paid_out[token_idx] += refund;
+                        }
                     }
                 }
                 StreamOp::TopUp { stream_idx, amount } => {
                     if !stream_records.is_empty() {
-                        let id = stream_records[stream_idx % stream_records.len()].0;
-                        let _ = contract.try_topup_stream(&id, &amount);
+                        let (id, token_idx) = stream_records[stream_idx % stream_records.len()];
+                        if let Ok(Ok(())) = contract.try_topup_stream(&id, &amount) {
+                            total_deposited[token_idx] += amount;
+                        }
                     }
                 }
                 StreamOp::AdvanceTime { delta_seconds } => {
@@ -323,12 +406,19 @@ proptest! {
                         &cliff_time,
                     ) {
                         stream_records.push((id, token_idx));
+                        total_deposited[token_idx] += amount;
                     }
                 }
             }
 
             // Invariant must hold for all tokens after EVERY operation.
-            assert_multi_token_escrow_invariants(&contract, &tokens, &stream_records);
+            assert_multi_token_escrow_invariants(
+                &contract,
+                &tokens,
+                &stream_records,
+                &total_deposited,
+                &total_paid_out,
+            );
         }
     }
 }

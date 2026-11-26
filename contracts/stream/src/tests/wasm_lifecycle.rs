@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
-    token, Address, Env,
+    testutils::{Address as _, Events as _, Ledger as _},
+    token, xdr, Address, Env, Event,
 };
 
 use crate::contract::StreamContractClient;
 use crate::error::StreamError;
+use crate::events::ToppedUp;
 use crate::types::StreamStatus;
 
 const RELATIVE_WASM_PATH: &str = "target/wasm32v1-none/release/tricklepay_stream.wasm";
@@ -377,4 +378,85 @@ fn compiled_wasm_withdraw_many_pays_two_streams() {
     assert_eq!(token.balance(&contract_id), 1_500);
     assert_eq!(client.withdrawable(&stream_a), 0);
     assert_eq!(client.withdrawable(&stream_b), 0);
+}
+
+#[test]
+fn compiled_wasm_stream_topup_lifecycle() {
+    let wasm_bytes = match load_wasm_bytes_or_skip() {
+        Some(bytes) => bytes,
+        None => return,
+    };
+
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(100);
+
+    let contract_id = env.register(wasm_bytes.as_slice(), ());
+    let client = StreamContractClient::new(&env, &contract_id);
+
+    let issuer = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(issuer);
+    let token_address = sac.address();
+    let token = token::TokenClient::new(&env, &token_address);
+    let token_admin = token::StellarAssetClient::new(&env, &token_address);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    token_admin.mint(&sender, &10_000);
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(stream_id, 0);
+    assert_eq!(token.balance(&sender), 9_000);
+    assert_eq!(token.balance(&contract_id), 1_000);
+
+    // Advance to midpoint (t = 600) and top up by 500.
+    env.ledger().set_timestamp(600);
+    assert_eq!(client.vested(&stream_id), 500);
+
+    client.topup_stream(&stream_id, &500);
+
+    let expected_event = ToppedUp {
+        sender: sender.clone(),
+        stream_id,
+        added_amount: 500,
+        new_total_amount: 1_500,
+        new_end_time: 1_100,
+    }
+    .to_xdr(&env, &contract_id);
+    let all_events = env.events().all();
+    let latest = all_events.events().last().unwrap();
+    let xdr::ContractEventBody::V0(latest_body) = &latest.body;
+    let xdr::ContractEventBody::V0(expected_body) = &expected_event.body;
+    assert_eq!(latest.ext, expected_event.ext);
+    assert_eq!(latest.type_, expected_event.type_);
+    assert_eq!(latest_body.topics, expected_body.topics);
+    assert_eq!(latest_body.data, expected_body.data);
+
+    assert_eq!(client.get_stream(&stream_id).total_amount, 1_500);
+    assert_eq!(client.vested(&stream_id), 750);
+    assert_eq!(token.balance(&sender), 8_500);
+    assert_eq!(token.balance(&contract_id), 1_500);
+
+    // Advance to stream end (t = 1100) and complete the stream.
+    env.ledger().set_timestamp(1_100);
+    assert_eq!(client.status(&stream_id), StreamStatus::Completed);
+    assert_eq!(client.vested(&stream_id), 1_500);
+    assert_eq!(client.withdrawable(&stream_id), 1_500);
+
+    let withdrawn = client.withdraw(&stream_id);
+    assert_eq!(withdrawn, 1_500);
+    assert_eq!(token.balance(&sender), 8_500);
+    assert_eq!(token.balance(&recipient), 1_500);
+    assert_eq!(token.balance(&contract_id), 0);
+    assert_eq!(client.withdrawable(&stream_id), 0);
+    assert_eq!(client.status(&stream_id), StreamStatus::Completed);
 }
