@@ -1333,6 +1333,7 @@ measured resource consumption in the local test environment using Soroban SDK
 | `cancel_preview` | ~66,000 | ~35,500 | 2 | 0 | Strictly read-only; reads instance & single stream; computes settlement preview without state writes |
 | `withdrawable_many` (20 ids) | ~1,050,000 | ~530,000 | 21 | 0 | Strictly read-only; reads instance & 20 streams; computes withdrawable balances linearly |
 | `withdraw_amount` | ~327,290 | ~125,723 | 8 | 4 | Partial draw equivalent to full `withdraw` with additional amount bounds validation |
+| `withdraw_to` | ~328,000 | ~126,000 | 8 | 4 | Partial withdrawal to a third-party `destination`; same footprint as `withdraw_amount` plus destination check |
 | `get_stream` (single) | ~65,457 | ~35,165 | 2 | 0* | Reads single stream; extends TTL only when remaining lifetime is below `BUMP_THRESHOLD` |
 
 \* *`get_stream` (and other individual view queries) does not write stream data, but

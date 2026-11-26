@@ -36,6 +36,14 @@ const WITHDRAW_MEM_CEILING: u64 = 160_000;
 const WITHDRAW_READ_ENTRIES_CEILING: u32 = 10;
 const WITHDRAW_WRITE_ENTRIES_CEILING: u32 = 6;
 
+/// Ceiling limits and relative margin for `withdraw_to` compared to `withdraw_amount`:
+const WITHDRAW_TO_CPU_CEILING: u64 = 400_000;
+const WITHDRAW_TO_MEM_CEILING: u64 = 160_000;
+const WITHDRAW_TO_READ_ENTRIES_CEILING: u32 = 10;
+const WITHDRAW_TO_WRITE_ENTRIES_CEILING: u32 = 6;
+const WITHDRAW_TO_CPU_MARGIN: u64 = 30_000;
+const WITHDRAW_TO_MEM_MARGIN: u64 = 15_000;
+
 /// Ceiling limits for `cancel`:
 /// Measured: ~325,373 CPU instructions, ~119,236 memory bytes, 7 read entries, 4 write entries.
 const CANCEL_CPU_CEILING: u64 = 400_000;
@@ -280,6 +288,90 @@ fn withdraw_resource_budget_stays_within_ceiling() {
         "withdraw write entries exceeded ceiling: measured {}, ceiling {}",
         res.write_entries,
         WITHDRAW_WRITE_ENTRIES_CEILING
+    );
+}
+
+#[test]
+fn withdraw_to_resource_budget_stays_within_ceiling() {
+    let t_amount = StreamTest::setup(1_000);
+    t_amount.set_time(100);
+    let id_amount = t_amount.open_default_stream(1_000);
+    t_amount.set_time(600);
+    t_amount.env.cost_estimate().budget().reset_unlimited();
+
+    let withdrawn_amount = t_amount.contract.withdraw_amount(&id_amount, &500);
+    assert_eq!(withdrawn_amount, 500);
+
+    let wa_res = t_amount.env.cost_estimate().resources();
+    let wa_cpu = t_amount.env.cost_estimate().budget().cpu_instruction_cost();
+    let wa_mem = t_amount.env.cost_estimate().budget().memory_bytes_cost();
+    let wa_reads = wa_res.disk_read_entries + wa_res.memory_read_entries;
+
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.open_default_stream(1_000);
+    let destination = Address::generate(&t.env);
+    t.set_time(600);
+    t.env.cost_estimate().budget().reset_unlimited();
+
+    let withdrawn = t.contract.withdraw_to(&id, &destination, &500);
+    assert_eq!(withdrawn, 500);
+
+    let res = t.env.cost_estimate().resources();
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    let mem = t.env.cost_estimate().budget().memory_bytes_cost();
+    let total_reads = res.disk_read_entries + res.memory_read_entries;
+
+    assert!(
+        cpu <= WITHDRAW_TO_CPU_CEILING,
+        "withdraw_to CPU budget exceeded ceiling: measured {}, ceiling {}",
+        cpu,
+        WITHDRAW_TO_CPU_CEILING
+    );
+    assert!(
+        mem <= WITHDRAW_TO_MEM_CEILING,
+        "withdraw_to memory budget exceeded ceiling: measured {}, ceiling {}",
+        mem,
+        WITHDRAW_TO_MEM_CEILING
+    );
+    assert!(
+        total_reads <= WITHDRAW_TO_READ_ENTRIES_CEILING,
+        "withdraw_to read entries exceeded ceiling: measured {}, ceiling {}",
+        total_reads,
+        WITHDRAW_TO_READ_ENTRIES_CEILING
+    );
+    assert!(
+        res.write_entries <= WITHDRAW_TO_WRITE_ENTRIES_CEILING,
+        "withdraw_to write entries exceeded ceiling: measured {}, ceiling {}",
+        res.write_entries,
+        WITHDRAW_TO_WRITE_ENTRIES_CEILING
+    );
+
+    assert!(
+        cpu <= wa_cpu + WITHDRAW_TO_CPU_MARGIN,
+        "withdraw_to CPU budget ({}) exceeded withdraw_amount ({}) + margin ({})",
+        cpu,
+        wa_cpu,
+        WITHDRAW_TO_CPU_MARGIN
+    );
+    assert!(
+        mem <= wa_mem + WITHDRAW_TO_MEM_MARGIN,
+        "withdraw_to memory budget ({}) exceeded withdraw_amount ({}) + margin ({})",
+        mem,
+        wa_mem,
+        WITHDRAW_TO_MEM_MARGIN
+    );
+    assert!(
+        total_reads <= wa_reads,
+        "withdraw_to read entries ({}) exceeded withdraw_amount ({})",
+        total_reads,
+        wa_reads
+    );
+    assert!(
+        res.write_entries <= wa_res.write_entries,
+        "withdraw_to write entries ({}) exceeded withdraw_amount ({})",
+        res.write_entries,
+        wa_res.write_entries
     );
 }
 

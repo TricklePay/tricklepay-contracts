@@ -536,3 +536,115 @@ fn custom_account_authorisation_fails_and_leaves_state_unchanged_when_denied() {
         contract_balance_before
     );
 }
+
+/// Issue #713 — withdraw_many with two distinct recipients fails when only one
+/// authorizes, leaving all balances and stream state untouched.
+#[test]
+fn withdraw_many_requires_authorization_from_all_distinct_recipients() {
+    use soroban_sdk::testutils::MockAuthInvoke;
+    use soroban_sdk::IntoVal;
+
+    let t = StreamTest::setup(2_000);
+    t.set_time(100);
+
+    let recipient_a = t.recipient.clone();
+    let recipient_b = soroban_sdk::Address::generate(&t.env);
+
+    let id_a = t.contract.create_stream(
+        &t.sender,
+        &recipient_a,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    let id_b = t.contract.create_stream(
+        &t.sender,
+        &recipient_b,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    let ids = soroban_sdk::vec![&t.env, id_a, id_b];
+    let withdraw_many_invoke = MockAuthInvoke {
+        contract: &t.contract.address,
+        fn_name: "withdraw_many",
+        args: soroban_sdk::vec![&t.env, ids.clone().into_val(&t.env)],
+        sub_invokes: &[],
+    };
+    t.env
+        .set_auths(&[t.auth_entry(&recipient_a, &withdraw_many_invoke)]);
+
+    assert!(
+        t.contract.try_withdraw_many(&ids).is_err(),
+        "withdraw_many must fail when second recipient authorization is missing"
+    );
+
+    assert_eq!(t.token.balance(&recipient_a), 0);
+    assert_eq!(t.token.balance(&recipient_b), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 2_000);
+    assert_eq!(t.contract.get_stream(&id_a).withdrawn, 0);
+    assert_eq!(t.contract.get_stream(&id_b).withdrawn, 0);
+}
+
+/// Issue #713 — withdraw_many records a single authorization per distinct recipient
+/// even when a recipient appears multiple times in the batch.
+#[test]
+fn withdraw_many_records_single_auth_per_distinct_recipient() {
+    let t = StreamTest::setup(3_000);
+    t.set_time(100);
+
+    let recipient_b = soroban_sdk::Address::generate(&t.env);
+
+    let id_a1 = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    let id_b = t.contract.create_stream(
+        &t.sender,
+        &recipient_b,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    let id_a2 = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    t.set_time(600);
+    let amounts = t
+        .contract
+        .withdraw_many(&soroban_sdk::vec![&t.env, id_a1, id_b, id_a2]);
+    assert_eq!(amounts, soroban_sdk::vec![&t.env, 500, 500, 500]);
+
+    let auths = t.env.auths();
+    let auth_a_count = auths
+        .iter()
+        .filter(|(addr, _)| addr == &t.recipient)
+        .count();
+    let auth_b_count = auths
+        .iter()
+        .filter(|(addr, _)| addr == &recipient_b)
+        .count();
+    assert_eq!(auth_a_count, 1, "repeated recipient should authorize once");
+    assert_eq!(auth_b_count, 1, "distinct recipient should authorize once");
+    assert_eq!(auths.len(), 2);
+}
