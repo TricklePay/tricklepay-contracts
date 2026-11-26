@@ -35,6 +35,10 @@ pub enum StreamOp {
     Cancel {
         stream_idx: usize,
     },
+    TopUp {
+        stream_idx: usize,
+        amount: i128,
+    },
     AdvanceTime {
         delta_seconds: u64,
     },
@@ -134,6 +138,8 @@ fn stream_ops_strategy() -> impl Strategy<Value = Vec<StreamOp>> {
             (0usize..10, 1i128..=5_000)
                 .prop_map(|(stream_idx, amount)| StreamOp::WithdrawAmount { stream_idx, amount }),
             (0usize..10).prop_map(|stream_idx| StreamOp::Cancel { stream_idx }),
+            (0usize..10, -100i128..=10_000)
+                .prop_map(|(stream_idx, amount)| StreamOp::TopUp { stream_idx, amount }),
             (1u64..=1_000).prop_map(|delta_seconds| StreamOp::AdvanceTime { delta_seconds }),
             (
                 0usize..3,
@@ -189,9 +195,9 @@ fn assert_multi_token_escrow_invariants(
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
-    /// Property test checking that random sequences of stream creation, withdrawal,
-    /// cancellation, and time advancement across multiple tokens and participants
-    /// strictly preserve each token's escrow balance invariant at every step.
+    /// Property test checking that random sequences of stream creation, top-up,
+    /// withdrawal, cancellation, and time advancement across multiple tokens and
+    /// participants strictly preserve each token's escrow balance invariant at every step.
     #[test]
     fn multi_token_multi_sender_escrow_conservation(
         initial_specs in initial_streams_strategy(),
@@ -284,6 +290,12 @@ proptest! {
                     if !stream_records.is_empty() {
                         let id = stream_records[stream_idx % stream_records.len()].0;
                         let _ = contract.try_cancel(&id);
+                    }
+                }
+                StreamOp::TopUp { stream_idx, amount } => {
+                    if !stream_records.is_empty() {
+                        let id = stream_records[stream_idx % stream_records.len()].0;
+                        let _ = contract.try_topup_stream(&id, &amount);
                     }
                 }
                 StreamOp::AdvanceTime { delta_seconds } => {

@@ -27,6 +27,7 @@ Add each new ADR to this list with its status and heading link.
 | [Do not bound timestamp magnitude](./ADR_TIMESTAMP_MAGNITUDE.md#adr-do-not-bound-timestamp-magnitude) | Accepted |
 | [Keep the stream id in event data](./ADR_STREAM_ID_EVENT_TOPIC.md#adr-keep-the-stream-id-in-event-data) | Accepted |
 | [Withdrawal accounting](./ADR_WITHDRAWAL_ACCOUNTING.md#withdrawal-accounting-decision) | Accepted |
+| [Top-up increases rate and preserves end time](#adr-top-up-increases-rate-and-preserves-end-time) | Accepted |
 
 ## New ADR template note
 
@@ -775,6 +776,86 @@ restored.
   Duration](INTEGRATOR_OPERATIONS.md#maximum-practical-stream-duration) —
   explains the TTL policy's impact on stream records themselves (which have
   their own, independent TTL in persistent storage).
+
+## ADR: Top-Up Increases Rate and Preserves End Time
+
+**Status:** Accepted
+
+### Context
+
+Senders sometimes need to add funds to an existing stream without breaking
+stream identity (`id`), event history, or recipient continuity. Allowing a
+sender to deposit additional tokens into a stream (`topup_stream(id,
+added_amount)`) requires choosing how the added tokens affect the linear
+vesting schedule (`vested = total_amount * elapsed / duration`), and which
+stream lifecycle states may be topped up.
+
+Two natural interpretations exist for adding `added_amount` to a stream:
+increasing `total_amount` while keeping `end_time` fixed (increasing the
+vesting rate), or keeping the vesting rate fixed and extending `end_time`. A
+third option is to omit top-ups altogether and require creating a new stream.
+
+### Decision
+
+`topup_stream(id, added_amount)` increases `stream.total_amount` by
+`added_amount` while keeping `start_time`, `cliff_time`, and `end_time`
+unchanged (increasing the effective vesting rate over the original schedule).
+
+Additionally:
+- **Only the stream's `sender`** may top up (`stream.sender.require_auth()`).
+- **Pending and active streams** (`!stream.cancelled && now < stream.end_time`)
+  may be topped up; `stream.withdrawn` is unchanged, and `ToppedUp` is emitted
+  with `(stream_id, added_amount, new_total_amount, end_time)`.
+- **Cancelled and completed streams are rejected** with
+  `StreamError::AlreadyCancelled` and `StreamError::StreamAlreadyCompleted`
+  (`now >= stream.end_time`), respectively.
+- **Amount bounds** still apply: `added_amount <= 0` rejects with
+  `StreamError::InvalidAmount`, and `total_amount + added_amount > MAX_AMOUNT`
+  (or `i128` overflow) rejects with `StreamError::AmountTooLarge`.
+
+### Alternatives considered
+
+1. **Extend the duration (preserve the vesting rate).** Compute
+   `end_time' = end_time + added_amount / rate` and keep the original
+   tokens-per-second rate constant. Rejected for `topup_stream`: integer division
+   introduces rounding/remainder drift when `added_amount` is not a multiple of
+   the rate, `cliff_time` interactions become ambiguous mid-stream, and
+   extending `end_time` near or past completion complicates lifecycle semantics.
+2. **Add a new stream instead of supporting top-ups.** Require the sender to
+   cancel or let the existing stream finish and call `create_stream` for the
+   additional amount. Rejected: this fragments recipient accounting across
+   multiple stream IDs and forces recipients and integrators to track
+   replacement streams for what is logically one funding relationship.
+3. **Increase the rate and preserve `end_time` (chosen).** Only `total_amount`
+   mutates, preserving the single-segment linear vesting formula
+   `total_amount * elapsed / duration` with zero timeline distortion and a
+   minimal state/storage footprint.
+
+### Consequences
+
+- **Retroactive vested jump:** Because `vested(t)` is computed from the current
+  `total_amount` over `[start_time, end_time]`, topping up a stream that is
+  already past `start_time` (and past `cliff_time`, if any) immediately
+  increases `vested(now)` and `withdrawable(now)` without time advancing. The
+  recipient can withdraw the newly vested difference right away.
+- **Indexers cannot treat `total_amount` as immutable:** Off-chain indexers
+  cannot compute `vested` solely from `Created.total_amount`; they must ingest
+  `ToppedUp` events to keep `total_amount` current (see
+  [INTEGRATOR_OPERATIONS.md](INTEGRATOR_OPERATIONS.md)).
+- **Completed and cancelled streams remain terminal for funding:** Once
+  `now >= end_time` or `cancelled == true`, `topup_stream` rejects and the
+  sender must call `create_stream` to send additional funds.
+- **Escrow invariant preserved:** Every accepted `topup_stream` transfers
+  `added_amount` into the contract before updating `total_amount`, keeping
+  contract token balance equal to the sum of `(total_amount - withdrawn)`.
+
+### Related references
+
+- [DESIGN_TOPUP.md](DESIGN_TOPUP.md) — full design rationale and edge cases.
+- [contracts/stream/src/contract.rs](../contracts/stream/src/contract.rs#L344) —
+  `topup_stream` implementation.
+- [contracts/stream/src/tests/topup.rs](../contracts/stream/src/tests/topup.rs) —
+  unit and integration tests for `topup_stream`.
 
 ## ADR: Third-party withdrawal (`withdraw_to`) without destination consent
 
