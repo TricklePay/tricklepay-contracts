@@ -1,0 +1,122 @@
+name: Check CHANGELOG for interface changes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-changelog:
+    name: Require CHANGELOG entry for interface changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Convention: pin actions to full commit SHAs so CI only runs reviewed
+      # action code; refresh these pins intentionally when updating actions.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Check for interface changes
+        id: check-interface
+        run: |
+          # Files that indicate ABI changes when modified
+          interface_files=(
+            "docs/interface.txt"
+            "contracts/stream/src/error.rs"
+          )
+          
+          # Get the list of changed files in this PR
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          else
+            echo "This check only runs on pull requests."
+            exit 0
+          fi
+          
+          changed_files=$(git diff --name-only "$base_sha" "$head_sha")
+          
+          # Check if any interface files changed
+          interface_changed=false
+          for file in "${interface_files[@]}"; do
+            if echo "$changed_files" | grep -q "^${file}\$"; then
+              interface_changed=true
+              echo "Interface file changed: $file"
+            fi
+          done
+          
+          echo "interface_changed=$interface_changed" >> "$GITHUB_OUTPUT"
+
+      - name: Check for CHANGELOG update
+        id: check-changelog
+        if: steps.check-interface.outputs.interface_changed == 'true'
+        run: |
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          
+          changed_files=$(git diff --name-only "$base_sha" "$head_sha")
+          
+          if echo "$changed_files" | grep -q "^CHANGELOG.md\$"; then
+            echo "changelog_updated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changelog_updated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for skip label
+        id: check-skip-label
+        if: steps.check-interface.outputs.interface_changed == 'true' && steps.check-changelog.outputs.changelog_updated == 'false'
+        run: |
+          # Check if the PR has the "skip-changelog" label
+          labels=$(gh pr view "${{ github.event.pull_request.number }}" --json labels --jq '.labels[].name')
+          
+          if echo "$labels" | grep -q "^skip-changelog\$"; then
+            echo "skip_label_present=true" >> "$GITHUB_OUTPUT"
+            echo "PR has 'skip-changelog' label - skipping CHANGELOG requirement"
+          else
+            echo "skip_label_present=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fail if CHANGELOG not updated
+        if: |
+          steps.check-interface.outputs.interface_changed == 'true' &&
+          steps.check-changelog.outputs.changelog_updated == 'false' &&
+          steps.check-skip-label.outputs.skip_label_present == 'false'
+        run: |
+          {
+            echo "### ❌ CHANGELOG entry required"
+            echo ""
+            echo "This pull request modifies interface files but does not update \`CHANGELOG.md\`."
+            echo ""
+            echo "**Modified interface files:**"
+            echo "- \`docs/interface.txt\` or \`contracts/stream/src/error.rs\`"
+            echo ""
+            echo "**Required action:**"
+            echo "Add an entry to \`CHANGELOG.md\` under the \`[Unreleased]\` section describing the change."
+            echo ""
+            echo "**To skip this check** (for doc-only snapshot changes with no ABI impact):"
+            echo "Add the \`skip-changelog\` label to this pull request."
+            echo ""
+            echo "**CHANGELOG rules:** See [CHANGELOG.md § How to read this changelog](CHANGELOG.md#how-to-read-this-changelog)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          
+          exit 1
+
+      - name: Success message
+        if: |
+          steps.check-interface.outputs.interface_changed == 'false' ||
+          steps.check-changelog.outputs.changelog_updated == 'true' ||
+          steps.check-skip-label.outputs.skip_label_present == 'true'
+        run: |
+          if [[ "${{ steps.check-interface.outputs.interface_changed }}" == "false" ]]; then
+            echo "✅ No interface changes detected - CHANGELOG check passed"
+          elif [[ "${{ steps.check-changelog.outputs.changelog_updated }}" == "true" ]]; then
+            echo "✅ CHANGELOG.md updated - check passed"
+          elif [[ "${{ steps.check-skip-label.outputs.skip_label_present }}" == "true" ]]; then
+            echo "✅ CHANGELOG check skipped via 'skip-changelog' label"
+          fi

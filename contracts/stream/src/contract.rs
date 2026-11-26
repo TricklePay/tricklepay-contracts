@@ -174,6 +174,68 @@ impl StreamContract {
         })
     }
 
+    /// Withdraws each stream's available balance in request order.
+    ///
+    /// Mixed recipients are allowed; each distinct recipient must authorize
+    /// the call once. Unknown ids fail the whole invocation. Streams with no
+    /// withdrawable balance contribute `0` to the returned amounts, and the
+    /// call returns [`StreamError::NothingToWithdraw`] if no tokens can be
+    /// paid. Duplicate ids are processed in order, so only the first entry
+    /// pays a given stream.
+    ///
+    /// Each positive payout makes one token transfer and emits one
+    /// [`events::Withdrawn`] event. The batch accepts at most
+    /// [`MAX_BATCH_SIZE`] ids.
+    pub fn withdraw_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
+        if ids.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        let now = env.ledger().timestamp();
+        let mut authorized_recipients = Vec::new(&env);
+        let mut amounts = Vec::new(&env);
+        let mut paid_any = false;
+
+        for id in ids {
+            let mut stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+
+            let mut already_authorized = false;
+            for recipient in authorized_recipients.iter() {
+                if recipient == stream.recipient {
+                    already_authorized = true;
+                    break;
+                }
+            }
+            if !already_authorized {
+                stream.recipient.require_auth();
+                authorized_recipients.push_back(stream.recipient.clone());
+            }
+
+            let vested = stream.vested_amount(now);
+            let amount = vesting::withdrawable_amount(vested, stream.withdrawn);
+            amounts.push_back(amount);
+
+            if amount > 0 {
+                stream.withdrawn += amount;
+                storage::set_stream(&env, id, &stream);
+                transfer(
+                    &env,
+                    &stream.token,
+                    &env.current_contract_address(),
+                    &stream.recipient,
+                    amount,
+                );
+                events::publish_withdrawn(&env, &stream.recipient, id, amount, &stream.recipient);
+                paid_any = true;
+            }
+        }
+
+        if !paid_any {
+            return Err(StreamError::NothingToWithdraw);
+        }
+        Ok(amounts)
+    }
+
     /// Transfers a requested amount up to the recipient's withdrawable balance.
     pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
         withdraw_with(&env, id, |available| {
@@ -504,6 +566,46 @@ impl StreamContract {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
         let vested = stream.vested_amount(env.ledger().timestamp());
         Ok(vesting::withdrawable_amount(vested, stream.withdrawn))
+    }
+
+    /// Returns withdrawable balances in request order, or `0` for unknown ids.
+    ///
+    /// This read-only view accepts at most [`MAX_BATCH_SIZE`] ids and returns
+    /// [`StreamError::BatchTooLarge`] when the limit is exceeded. It does not
+    /// change storage or publish events.
+    pub fn withdrawable_many(env: Env, ids: Vec<u64>) -> Result<Vec<i128>, StreamError> {
+        if ids.len() > MAX_BATCH_SIZE {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        let now = env.ledger().timestamp();
+        let mut amounts = Vec::new(&env);
+        for id in ids {
+            let amount = match storage::get_stream_readonly(&env, id) {
+                Some(stream) => {
+                    let vested = stream.vested_amount(now);
+                    vesting::withdrawable_amount(vested, stream.withdrawn)
+                }
+                None => 0,
+            };
+            amounts.push_back(amount);
+        }
+        Ok(amounts)
+    }
+
+    /// Returns the integer number of token base units vested per second.
+    ///
+    /// The rate is rounded down as `total_amount / (end_time - start_time)`.
+    /// The division remainder (`total_amount % duration`) is not included in
+    /// this nominal rate; the vesting schedule still releases the full total
+    /// by `end_time`. Cancelled streams return `0`.
+    pub fn rate_per_second(env: Env, id: u64) -> Result<i128, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        if stream.cancelled {
+            return Ok(0);
+        }
+        let duration = i128::from(stream.end_time - stream.start_time);
+        Ok(stream.total_amount / duration)
     }
 
     /// Returns the total amount vested at the current ledger time, including withdrawals.
